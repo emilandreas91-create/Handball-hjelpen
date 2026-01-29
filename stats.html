@@ -19,14 +19,23 @@
     </nav>
 
     <div class="stats-container">
+        <!-- Team Management Bar -->
+        <div class="team-management">
+            <button class="btn-small" onclick="openTeamModal()">+ Registrer Nytt Lag</button>
+        </div>
+
         <div class="scoreboard">
             <div class="score-team">
-                <h3>HJEMME</h3>
+                <select id="homeTeamSelect" onchange="updateTeamSelection()">
+                    <option value="Hjemme">HJEMME</option>
+                </select>
                 <div class="score" id="homeScore">0</div>
             </div>
-            <div class="match-time">1. OMG</div>
+            <div class="match-time" id="matchPeriod" onclick="changePeriod()">1. OMG</div>
             <div class="score-team">
-                <h3>BORTE</h3>
+                <select id="awayTeamSelect" onchange="updateTeamSelection()">
+                    <option value="Borte">BORTE</option>
+                </select>
                 <div class="score" id="awayScore">0</div>
             </div>
         </div>
@@ -54,7 +63,10 @@
             </button>
         </div>
 
-        <button class="add-btn" onclick="openModal()">+ Legg til ny teller</button>
+        <div class="action-buttons">
+            <button class="add-btn" onclick="openModal()">+ Legg til ny teller</button>
+            <button class="save-btn" onclick="openSaveModal()">💾 Lagre Kamp</button>
+        </div>
     </div>
 
     <!-- Modal for adding custom stat -->
@@ -64,8 +76,32 @@
             <p>Hva vil du telle?</p>
             <input type="text" id="newStatName" placeholder="F.eks. Skritt, Brøyt, 2-minutter...">
             <div class="modal-actions">
-                <button class="btn-cancel" onclick="closeModal()">Avbryt</button>
+                <button class="btn-cancel" onclick="closeModal('customModal')">Avbryt</button>
                 <button class="btn-primary" onclick="addCustomStat()">Opprett</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Registering Team -->
+    <div class="modal" id="teamModal">
+        <div class="modal-content">
+            <h2>Registrer Nytt Lag</h2>
+            <input type="text" id="newTeamName" placeholder="Lagnavn (f.eks. Haslum G14)">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal('teamModal')">Avbryt</button>
+                <button class="btn-primary" onclick="registerTeam()">Lagre Lag</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Saving Match -->
+    <div class="modal" id="saveMatchModal">
+        <div class="modal-content">
+            <h2>Lagre Kampstatistikk</h2>
+            <input type="text" id="matchNameInput" placeholder="Kampnavn (f.eks. Haslum vs Elverum)">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal('saveMatchModal')">Avbryt</button>
+                <button class="btn-primary" onclick="saveMatch()">Lagre</button>
             </div>
         </div>
     </div>
