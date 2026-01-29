@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="no">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Statistikk</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <nav>
+        <div class="logo">Team Håndball</div>
+        <div class="nav-links">
+            <a href="index.html">Hjem</a>
+            <a href="stats.html" class="active">Statistikk</a>
+        </div>
+    </nav>
+
+    <div class="stats-container">
+        <div class="scoreboard">
+            <div class="score-team">
+                <h3>HJEMME</h3>
+                <div class="score" id="homeScore">0</div>
+            </div>
+            <div class="match-time">1. OMG</div>
+            <div class="score-team">
+                <h3>BORTE</h3>
+                <div class="score" id="awayScore">0</div>
+            </div>
+        </div>
+
+        <div class="controls-grid" id="statsGrid">
+            <!-- Default Buttons -->
+            <button class="stat-btn btn-goal" onclick="updateStat('goal', this)">
+                <span>MÅL</span>
+                <span class="count-value">0</span>
+            </button>
+
+            <button class="stat-btn btn-miss" onclick="updateStat('miss', this)">
+                <span>BOM</span>
+                <span class="count-value">0</span>
+            </button>
+
+            <button class="stat-btn btn-save" onclick="updateStat('save', this)">
+                <span>REDNING</span>
+                <span class="count-value">0</span>
+            </button>
+
+            <button class="stat-btn btn-tech" onclick="updateStat('tech', this)">
+                <span>TEK. FEIL</span>
+                <span class="count-value">0</span>
+            </button>
+        </div>
+
+        <button class="add-btn" onclick="openModal()">+ Legg til ny teller</button>
+    </div>
+
+    <!-- Modal for adding custom stat -->
+    <div class="modal" id="customModal">
+        <div class="modal-content">
+            <h2>Ny statistikk-knapp</h2>
+            <p>Hva vil du telle?</p>
+            <input type="text" id="newStatName" placeholder="F.eks. Skritt, Brøyt, 2-minutter...">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal()">Avbryt</button>
+                <button class="btn-primary" onclick="addCustomStat()">Opprett</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
