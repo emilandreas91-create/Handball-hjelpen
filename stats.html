@@ -15,7 +15,7 @@
         <div class="nav-links">
             <a href="index.html">Hjem</a>
             <a href="stats.html" class="active">Statistikk</a>
-        </div>
+            <a href="teams.html">Lag</a>
     </nav>
 
     <div class="stats-container">
@@ -25,14 +25,14 @@
         </div>
 
         <div class="scoreboard">
-            <div class="score-team">
+            <div class="score-team" id="scoreTeamHome" onclick="selectTeam('home')">
                 <select id="homeTeamSelect" onchange="updateTeamSelection()">
                     <option value="Hjemme">HJEMME</option>
                 </select>
                 <div class="score" id="homeScore">0</div>
             </div>
             <div class="match-time" id="matchPeriod" onclick="changePeriod()">1. OMG</div>
-            <div class="score-team">
+            <div class="score-team" id="scoreTeamAway" onclick="selectTeam('away')">
                 <select id="awayTeamSelect" onchange="updateTeamSelection()">
                     <option value="Borte">BORTE</option>
                 </select>
@@ -42,22 +42,22 @@
 
         <div class="controls-grid" id="statsGrid">
             <!-- Default Buttons -->
-            <button class="stat-btn btn-goal" onclick="updateStat('goal', this)">
+            <button class="stat-btn btn-goal" data-type="goal" onclick="updateStat('goal', this)">
                 <span>MÅL</span>
                 <span class="count-value">0</span>
             </button>
 
-            <button class="stat-btn btn-miss" onclick="updateStat('miss', this)">
+            <button class="stat-btn btn-miss" data-type="miss" onclick="updateStat('miss', this)">
                 <span>BOM</span>
                 <span class="count-value">0</span>
             </button>
 
-            <button class="stat-btn btn-save" onclick="updateStat('save', this)">
+            <button class="stat-btn btn-save" data-type="save" onclick="updateStat('save', this)">
                 <span>REDNING</span>
                 <span class="count-value">0</span>
             </button>
 
-            <button class="stat-btn btn-tech" onclick="updateStat('tech', this)">
+            <button class="stat-btn btn-tech" data-type="tech" onclick="updateStat('tech', this)">
                 <span>TEK. FEIL</span>
                 <span class="count-value">0</span>
             </button>
@@ -106,7 +106,7 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 
 </html>

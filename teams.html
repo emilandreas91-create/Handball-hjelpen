@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="no">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lagliste - Team Håndball</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        .teams-container {
+            padding: 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .team-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .team-card:hover {
+            border-color: var(--primary-color);
+            transform: translateX(5px);
+        }
+
+        .team-name {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: white;
+        }
+
+        .team-stats-summary {
+            color: #888;
+        }
+
+        /* Modal specific for Team Details */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+    </style>
+</head>
+
+<body>
+    <nav>
+        <div class="logo">Team Håndball</div>
+        <div class="nav-links">
+            <a href="index.html">Hjem</a>
+            <a href="stats.html">Statistikk</a>
+            <a href="teams.html" class="active">Lag</a>
+        </div>
+    </nav>
+
+    <div class="teams-container">
+        <h1>Registrerte Lag</h1>
+        <div id="teamsList" class="teams-grid">
+            <!-- Teams will be populated here -->
+            <p style="color: #666;">Ingen lag funnet. Registrer lag på Statistikk-siden.</p>
+        </div>
+    </div>
+
+    <!-- Team Details Modal -->
+    <div class="modal" id="teamDetailModal">
+        <div class="modal-content">
+            <h2 id="modalTeamName">Lagnavn</h2>
+            <div id="modalTeamStats">
+                <!-- Stats go here -->
+            </div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="closeModal('teamDetailModal')">Lukk</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+
+</html>

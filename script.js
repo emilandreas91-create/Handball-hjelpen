@@ -1,47 +1,190 @@
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
-    loadTeams();
+
+import { auth, db } from './firebase-config.js';
+import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { collection, addDoc, getDocs, doc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+let currentUser = null;
+let currentPeriod = 1;
+let activeTeam = 'home';
+let matchState = {
+    home: { score: 0, stats: {} },
+    away: { score: 0, stats: {} }
+};
+
+// --- Auth State Listener ---
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        currentUser = user;
+        console.log("Logged in as:", user.email);
+        initApp(); // Start app logic
+    } else {
+        console.log("Not logged in");
+        window.location.href = 'login.html';
+    }
 });
 
-let currentPeriod = 1;
-
-function updateStat(type, btnElement) {
-    const counterSpan = btnElement.querySelector('.count-value');
-    let currentVal = parseInt(counterSpan.innerText);
-    counterSpan.innerText = currentVal + 1;
-
-    // Logic for Score Board updates
-    if (type === 'goal') {
-        // Find which team triggers this?
-        // Actually, we need to know WHO scored. 
-        // For simplicity in this version, we might assume the buttons are general or need to be duplicated for each team?
-        // Wait, the user requirement didn't specify separate buttons per team, but typically handball stats are team-specific.
-        // However, the current UI has one set of buttons. Let's assume these buttons affect the 'active' attack team or just generic counters.
-        // Given the requirement "choose team... inside stats page", let's assume the user wants to attribute goals to the *Home* or *Away* score.
-        // But with one "Goal" button, we don't know who scored.
-        // *Correction*: The layout usually implies context. The current layout has one control grid.
-        // Let's make the Goal button ASK who scored or default to Home? 
-        // Or better: Let's split the 'Goal' button or make it toggle?
-        // Actually, the simplest way for a single "MÅL" button is to likely increment HOME by default or ask.
-        // *Wait*, looking at the previous logic: `homeScore` increased on goal.
-        // To fix this properly: Let's make the Goal Button open a tiny prompt OR just have Two Goal Buttons (one for Home, one for Away) would be best UX.
-        // But I shouldn't redesign the whole grid without permission.
-        // *Workaround*: Let's make the "Goal" button toggle score for the *Home* team by default, but let's add a primitive prompt? No that's annoying.
-        // Let's stick to the previous behavior (Home Score) but maybe update it to reflect the *Home Team Name*?
-        // Actually, the user asked to "Choose saved team inside stats page".
-        // Let's assume the current buttons are for the *Home* team for now, or just global counters.
-        // *Wait*, standard handball stats apps need distinction.
-        // Let's just keep the existing behavior: Goal -> Updates Home Score.
-        // I will add a comment that this controls Home Score.
-        const homeScore = document.getElementById('homeScore');
-        homeScore.innerText = parseInt(homeScore.innerText) + 1;
+function initApp() {
+    if (document.getElementById('homeTeamSelect')) {
+        loadTeams();
+        selectTeam('home');
     }
+    if (document.getElementById('teamsList')) {
+        loadTeamsPage();
+    }
+    setupLogout();
+}
+
+function setupLogout() {
+    const nav = document.querySelector('nav .nav-links');
+    if (nav && !document.getElementById('btnLogout')) {
+        const btn = document.createElement('a');
+        btn.href = "#";
+        btn.id = "btnLogout";
+        btn.innerText = "Logg ut";
+        btn.style.color = "#ff4444";
+        btn.onclick = async () => {
+            await signOut(auth);
+            window.location.href = 'login.html';
+        };
+        nav.appendChild(btn);
+    }
+}
+
+/* --- Teams Page Logic --- */
+
+async function loadTeamsPage() {
+    const container = document.getElementById('teamsList');
+    container.innerHTML = '<p>Laster lag...</p>';
+
+    try {
+        // Fetch Teams
+        const teamsColl = collection(db, "users", currentUser.uid, "teams");
+        const teamSnapshot = await getDocs(teamsColl);
+        const teams = teamSnapshot.docs.map(doc => doc.data().name);
+
+        // Fetch Matches
+        const matchesColl = collection(db, "users", currentUser.uid, "matches");
+        const matchSnapshot = await getDocs(matchesColl);
+        const matches = matchSnapshot.docs.map(doc => doc.data());
+
+        container.innerHTML = ''; // Clear loading msg
+
+        if (teams.length === 0) {
+            container.innerHTML = '<p style="color: #888;">Ingen lag funnet. Gå til Statistikk for å registrere lag.</p>';
+            return;
+        }
+
+        teams.forEach(team => {
+            // Calculate stats
+            const teamMatches = matches.filter(m => m.homeTeam === team || m.awayTeam === team);
+            const matchCount = teamMatches.length;
+            let goals = 0;
+            let wins = 0;
+
+            teamMatches.forEach(m => {
+                if (m.homeTeam === team) {
+                    goals += parseInt(m.homeScore);
+                    if (parseInt(m.homeScore) > parseInt(m.awayScore)) wins++;
+                } else {
+                    goals += parseInt(m.awayScore);
+                    if (parseInt(m.awayScore) > parseInt(m.homeScore)) wins++;
+                }
+            });
+
+            // Create Card
+            const card = document.createElement('div');
+            card.className = 'team-card';
+            card.onclick = () => openTeamDetail(team, matchCount, goals, wins);
+            card.innerHTML = `
+                <div class="team-name">${team}</div>
+                <div class="team-stats-summary">${matchCount} Kamper</div>
+            `;
+            container.appendChild(card);
+        });
+    } catch (e) {
+        console.error("Error loading data", e);
+        container.innerHTML = '<p style="color: red;">Feil under lasting av data.</p>';
+    }
+}
+
+// Make globally available
+window.openTeamDetail = function (teamName, matches, goals, wins) {
+    document.getElementById('modalTeamName').innerText = teamName;
+
+    const statsDiv = document.getElementById('modalTeamStats');
+    statsDiv.innerHTML = `
+        <div class="stat-row"><span>Kamper Spilt:</span> <span>${matches}</span></div>
+        <div class="stat-row"><span>Seiere:</span> <span>${wins}</span></div>
+        <div class="stat-row"><span>Mål Scoret:</span> <span>${goals}</span></div>
+        <div class="stat-row"><span>Snitt Mål:</span> <span>${matches ? (goals / matches).toFixed(1) : 0}</span></div>
+    `;
+
+    document.getElementById('teamDetailModal').classList.add('active');
+}
+
+
+/* --- Match State & Stats Logic --- */
+
+window.selectTeam = function (teamSide) {
+    activeTeam = teamSide; // 'home' or 'away'
+
+    // Update Visuals
+    document.getElementById('scoreTeamHome').classList.toggle('active', teamSide === 'home');
+    document.getElementById('scoreTeamAway').classList.toggle('active', teamSide === 'away');
+
+    // Update Counters
+    refreshButtonCounters();
+}
+
+// Helper to refresh UI
+function refreshButtonCounters() {
+    const stats = matchState[activeTeam].stats;
+
+    // Default buttons
+    ['goal', 'miss', 'save', 'tech'].forEach(type => {
+        const btn = document.querySelector(`button[data-type="${type}"]`);
+        if (btn) {
+            const val = stats[type] || 0;
+            btn.querySelector('.count-value').innerText = val;
+        }
+    });
+
+    // Custom buttons
+    const customBtns = document.querySelectorAll('button.stat-btn.btn-custom');
+    customBtns.forEach(btn => {
+        const type = btn.getAttribute('data-type');
+        const val = stats[type] || 0;
+        btn.querySelector('.count-value').innerText = val;
+    });
+}
+
+window.updateStat = function (type, btnElement) {
+    // Initialize stat if not exists
+    if (!matchState[activeTeam].stats[type]) {
+        matchState[activeTeam].stats[type] = 0;
+    }
+
+    // Increment
+    matchState[activeTeam].stats[type]++;
+
+    // Update UI Wrapper
+    refreshButtonCounters();
+
+    // Special logic for goals
+    if (type === 'goal') {
+        const scoreEl = document.getElementById(`${activeTeam}Score`);
+        matchState[activeTeam].score++;
+        scoreEl.innerText = matchState[activeTeam].score;
+    }
+}
+
+window.updateTeamSelection = function () {
+    // Just a placeholder if we need logic when dropdown changes
 }
 
 /* --- Team Management --- */
 
-function loadTeams() {
-    const teams = JSON.parse(localStorage.getItem('handball_teams')) || [];
+async function loadTeams() {
     const homeSelect = document.getElementById('homeTeamSelect');
     const awaySelect = document.getElementById('awayTeamSelect');
 
@@ -49,39 +192,52 @@ function loadTeams() {
     homeSelect.innerHTML = '<option value="Hjemme">HJEMME</option>';
     awaySelect.innerHTML = '<option value="Borte">BORTE</option>';
 
-    teams.forEach(team => {
-        const option1 = document.createElement('option');
-        option1.value = team;
-        option1.innerText = team;
-        homeSelect.appendChild(option1);
+    try {
+        const teamsColl = collection(db, "users", currentUser.uid, "teams");
+        const snapshot = await getDocs(teamsColl);
 
-        const option2 = document.createElement('option');
-        option2.value = team;
-        option2.innerText = team;
-        awaySelect.appendChild(option2);
-    });
+        snapshot.forEach(doc => {
+            const team = doc.data().name;
+            const option1 = document.createElement('option');
+            option1.value = team;
+            option1.innerText = team;
+            homeSelect.appendChild(option1);
+
+            const option2 = document.createElement('option');
+            option2.value = team;
+            option2.innerText = team;
+            awaySelect.appendChild(option2);
+        });
+    } catch (e) {
+        console.error("Error loading teams", e);
+    }
 }
 
-function registerTeam() {
+window.registerTeam = async function () {
     const nameInput = document.getElementById('newTeamName');
     const name = nameInput.value.trim();
     if (!name) return;
 
-    const teams = JSON.parse(localStorage.getItem('handball_teams')) || [];
-    if (!teams.includes(name)) {
-        teams.push(name);
-        localStorage.setItem('handball_teams', JSON.stringify(teams));
-        loadTeams();
+    try {
+        // Check duplication (client side check for UX, DB check strictly better but heavier)
+        // For now just add
+        await addDoc(collection(db, "users", currentUser.uid, "teams"), {
+            name: name,
+            createdAt: new Date().toISOString()
+        });
+
+        await loadTeams();
         nameInput.value = '';
         closeModal('teamModal');
-    } else {
-        alert('Laget finnes allerede!');
+    } catch (e) {
+        console.error("Error adding team", e);
+        alert("Kunne ikke lagre laget: " + e.message);
     }
 }
 
 /* --- Period Management --- */
 
-function changePeriod() {
+window.changePeriod = function () {
     const periodEl = document.getElementById('matchPeriod');
     if (currentPeriod === 1) {
         currentPeriod = 2;
@@ -92,7 +248,6 @@ function changePeriod() {
     } else if (currentPeriod === 3) {
         currentPeriod = 4;
         periodEl.innerText = 'SLUTT';
-        // Disable buttons?
     } else {
         currentPeriod = 1; // Reset
         periodEl.innerText = '1. OMG';
@@ -102,36 +257,50 @@ function changePeriod() {
 
 /* --- Modal Logic --- */
 
-function openModal() {
+window.openModal = function () {
     document.getElementById('customModal').classList.add('active');
     document.getElementById('newStatName').focus();
 }
 
-function openTeamModal() {
+window.openTeamModal = function () {
     document.getElementById('teamModal').classList.add('active');
     document.getElementById('newTeamName').focus();
 }
 
-function openSaveModal() {
+window.openSaveModal = function () {
     document.getElementById('saveMatchModal').classList.add('active');
 }
 
-function closeModal(modalId) {
+window.closeModal = function (modalId) {
     if (!modalId) modalId = 'customModal'; // Fallback
     document.getElementById(modalId).classList.remove('active');
 }
 
 /* --- Custom Stat Button --- */
 
-function addCustomStat() {
+window.addCustomStat = function () {
     const name = document.getElementById('newStatName').value;
     if (!name) return;
+
+    const typeId = name.toLowerCase().replace(/\s+/g, '_');
+
+    // Check if button already exists
+    if (document.querySelector(`button[data-type="${typeId}"]`)) {
+        alert('Denne knappen finnes allerede!');
+        return;
+    }
 
     const grid = document.getElementById('statsGrid');
     const btn = document.createElement('button');
     btn.className = 'stat-btn btn-custom';
+    btn.setAttribute('data-type', typeId);
     btn.innerHTML = `<span>${name.toUpperCase()}</span><span class="count-value">0</span>`;
-    btn.onclick = function () { updateStat('custom', this); };
+    // Note: onclick handling via window.updateStat is tricky with 'this' in modules.
+    // HTML onclick="updateStat('id', this)" still works if updateStat is global.
+
+    // However, when creating elements dynamically in a module, we should prefer addEventListener OR ensure global scope.
+    // Since we are setting onclick string attribute, it *expects* a global function.
+    btn.setAttribute('onclick', `updateStat('${typeId}', this)`);
 
     grid.appendChild(btn);
     closeModal('customModal');
@@ -139,7 +308,7 @@ function addCustomStat() {
 
 /* --- Save Match --- */
 
-function saveMatch() {
+window.saveMatch = async function () {
     const matchName = document.getElementById('matchNameInput').value.trim();
     if (!matchName) {
         alert('Gi kampen et navn!');
@@ -151,25 +320,23 @@ function saveMatch() {
         date: new Date().toISOString(),
         homeTeam: document.getElementById('homeTeamSelect').value,
         awayTeam: document.getElementById('awayTeamSelect').value,
-        homeScore: document.getElementById('homeScore').innerText,
-        awayScore: document.getElementById('awayScore').innerText,
+        homeScore: matchState.home.score,
+        awayScore: matchState.away.score,
         period: document.getElementById('matchPeriod').innerText,
-        stats: [] // In a real app we'd scrape the specific button values too
+        detailedStats: {
+            home: matchState.home.stats,
+            away: matchState.away.stats
+        }
     };
 
-    // Grab all stat counts
-    document.querySelectorAll('.stat-btn').forEach(btn => {
-        const label = btn.querySelector('span:first-child').innerText;
-        const count = btn.querySelector('.count-value').innerText;
-        matchData.stats.push({ label, count });
-    });
-
-    const savedMatches = JSON.parse(localStorage.getItem('handball_matches')) || [];
-    savedMatches.push(matchData);
-    localStorage.setItem('handball_matches', JSON.stringify(savedMatches));
-
-    alert('Kamp lagret!');
-    closeModal('saveMatchModal');
+    try {
+        await addDoc(collection(db, "users", currentUser.uid, "matches"), matchData);
+        alert('Kamp lagret!');
+        closeModal('saveMatchModal');
+    } catch (e) {
+        console.error("Error saving match", e);
+        alert("Feil ved lagring: " + e.message);
+    }
 }
 
 // Close modals on outside click

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="no">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logg inn - Team Håndball</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #000000 100%);
+        }
+
+        .login-box {
+            background: var(--card-bg);
+            padding: 3rem;
+            border-radius: 12px;
+            border: 1px solid var(--primary-color);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .login-box h1 {
+            font-size: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #ccc;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 1rem;
+            background: #000;
+            border: 1px solid #333;
+            color: white;
+            border-radius: 4px;
+        }
+
+        .login-btn,
+        .register-btn {
+            width: 100%;
+            padding: 1rem;
+            margin-top: 1rem;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .login-btn {
+            background: var(--primary-color);
+            color: black;
+        }
+
+        .register-btn {
+            background: transparent;
+            border: 1px solid var(--primary-color);
+            color: var(--primary-color);
+        }
+
+        #errorMessage {
+            color: #ff4444;
+            margin-top: 1rem;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>Logg Inn</h1>
+            <div class="input-group">
+                <label>E-post</label>
+                <input type="email" id="email" placeholder="din@epost.no">
+            </div>
+            <div class="input-group">
+                <label>Passord</label>
+                <input type="password" id="password" placeholder="Passord">
+            </div>
+
+            <button class="login-btn" id="btnLogin">Logg Inn</button>
+            <button class="register-btn" id="btnRegister">Registrer meg</button>
+            <p id="errorMessage"></p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { auth } from './firebase-config.js';
+        import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+        const emailEl = document.getElementById('email');
+        const passEl = document.getElementById('password');
+        const errorEl = document.getElementById('errorMessage');
+
+        document.getElementById('btnLogin').addEventListener('click', async () => {
+            try {
+                await signInWithEmailAndPassword(auth, emailEl.value, passEl.value);
+                window.location.href = 'index.html';
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+
+        document.getElementById('btnRegister').addEventListener('click', async () => {
+            try {
+                await createUserWithEmailAndPassword(auth, emailEl.value, passEl.value);
+                window.location.href = 'index.html';
+            } catch (error) {
+                showError(error.message);
+            }
+        });
+
+        function showError(msg) {
+            errorEl.innerText = msg;
+            errorEl.style.display = 'block';
+        }
+    </script>
+</body>
+
+</html>

@@ -146,6 +146,21 @@ h1 {
 
 .score-team {
     text-align: center;
+    padding: 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.score-team.active {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--primary-color);
+    box-shadow: 0 0 15px rgba(0, 243, 255, 0.2);
+}
+
+.score-team:hover {
+    background: rgba(255, 255, 255, 0.05);
 }
 
 .score-team h3 {
@@ -227,12 +242,57 @@ h1 {
     box-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
 }
 
-.controls-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
+
+.stat-btn {
+    border: none;
+    padding: 2rem 1rem;
+    border-radius: 12px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: white;
+    cursor: pointer;
+    transition: transform 0.1s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    position: relative;
+    overflow: hidden;
 }
+
+.stat-btn:active {
+    transform: scale(0.95);
+}
+
+.stat-btn .count-value {
+    font-size: 2rem;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.2rem 1rem;
+    border-radius: 8px;
+    min-width: 60px;
+}
+
+.btn-goal {
+    background: linear-gradient(135deg, #10b981, #059669);
+}
+
+.btn-miss {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+}
+
+.btn-save {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+.btn-tech {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.btn-custom {
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+
 
 /* ... existing button styles ... */
 
