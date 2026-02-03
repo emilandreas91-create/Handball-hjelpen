@@ -1,7 +1,20 @@
 
-import { auth, db } from './firebase-config.js';
-import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { collection, addDoc, getDocs, doc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, doc, query, where, orderBy } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyC_09gTMNbLSwfAjWrqW3A5ehoqSXGklmE",
+    authDomain: "handball-stats-ab84e.firebaseapp.com",
+    projectId: "handball-stats-ab84e",
+    storageBucket: "handball-stats-ab84e.firebasestorage.app",
+    messagingSenderId: "948752971118",
+    appId: "1:948752971118:web:4de735ba51f39d73097d7f"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
 let currentUser = null;
 let currentPeriod = 1;
@@ -24,6 +37,8 @@ onAuthStateChanged(auth, (user) => {
 });
 
 function initApp() {
+    renderNavigation();
+
     if (document.getElementById('homeTeamSelect')) {
         loadTeams();
         selectTeam('home');
@@ -31,22 +46,60 @@ function initApp() {
     if (document.getElementById('teamsList')) {
         loadTeamsPage();
     }
-    setupLogout();
 }
 
-function setupLogout() {
-    const nav = document.querySelector('nav .nav-links');
-    if (nav && !document.getElementById('btnLogout')) {
+/* --- Navigation Logic --- */
+
+function renderNavigation() {
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+
+    nav.innerHTML = `
+        <div class="logo">Team Håndball</div>
+        <div class="nav-links">
+            <a href="index.html">Hjem</a>
+            <a href="stats.html">Statistikk</a>
+            <a href="teams.html">Lag</a>
+        </div>
+    `;
+
+    // Highlight active link
+    const path = window.location.pathname;
+    const links = nav.querySelectorAll('.nav-links a');
+    links.forEach(link => {
+        if (path.includes(link.getAttribute('href'))) {
+            link.classList.add('active');
+        }
+    });
+
+    setupUserDisplay(nav);
+}
+
+function setupUserDisplay(nav) {
+    const navLinks = nav.querySelector('.nav-links');
+    if (!navLinks) return;
+
+    if (currentUser) {
+        // User Name Display
+        const userDisplay = document.createElement('span');
+        userDisplay.style.color = 'var(--primary-color)';
+        userDisplay.style.fontWeight = 'bold';
+        userDisplay.style.marginRight = '1rem';
+        userDisplay.innerText = currentUser.displayName || currentUser.email;
+        navLinks.appendChild(userDisplay);
+
+        // Logout Button
         const btn = document.createElement('a');
         btn.href = "#";
         btn.id = "btnLogout";
         btn.innerText = "Logg ut";
         btn.style.color = "#ff4444";
-        btn.onclick = async () => {
+        btn.onclick = async (e) => {
+            e.preventDefault();
             await signOut(auth);
             window.location.href = 'login.html';
         };
-        nav.appendChild(btn);
+        navLinks.appendChild(btn);
     }
 }
 
