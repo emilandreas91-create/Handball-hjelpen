@@ -1,0 +1,27 @@
+/* CSS variables port */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-text font-sans antialiased;
+    background-color: theme('colors.background');
+    /* Fallback / Override */
+  }
+}
+
+/* Custom utilities if needed for neon effects */
+@layer utilities {
+  .neon-glow {
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.5), 0 0 20px rgba(0, 243, 255, 0.3);
+  }
+
+  .neon-text {
+    text-shadow: 0 0 5px rgba(0, 243, 255, 0.8);
+  }
+}
