@@ -16,7 +16,10 @@ export function useTeams() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!currentUser) return;
+        if (!currentUser) {
+            setLoading(false);
+            return;
+        }
 
         const q = query(
             collection(db, 'users', currentUser.uid, 'teams'),

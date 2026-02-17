@@ -29,11 +29,7 @@ export function Teams() {
         }
     }
 
-    if (loading) return (
-        <div className="flex justify-center items-center h-[50vh]">
-            <Loader2 className="animate-spin text-primary" size={48} />
-        </div>
-    );
+
 
     return (
         <div>
@@ -68,7 +64,11 @@ export function Teams() {
 
             {/* Team Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {teams.length === 0 ? (
+                {loading ? (
+                    <div className="col-span-full flex justify-center py-20">
+                        <Loader2 className="animate-spin text-primary" size={48} />
+                    </div>
+                ) : teams.length === 0 ? (
                     <div className="col-span-full text-center py-20 bg-white/5 rounded-2xl border border-dashed border-white/10">
                         <p className="text-gray-500 text-xl">Ingen lag registrert enda.</p>
                     </div>

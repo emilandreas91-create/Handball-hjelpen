@@ -2,16 +2,18 @@ import { useState, useEffect } from 'react';
 import { useMatch, TeamSide } from '../hooks/useMatch';
 import { useTeams } from '../hooks/useTeams';
 import { StatButton } from '../components/features/StatButton';
-import { Play, Pause, Save as SaveIcon } from 'lucide-react';
+import { GoalVisualizer } from '../components/features/GoalVisualizer';
+import { Play, Pause, Save as SaveIcon, RotateCcw } from 'lucide-react';
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/AuthProvider';
 import { clsx } from 'clsx';
+import { Plus, Edit2, Trash2 } from 'lucide-react';
 
 export function Stats() {
     const {
         matchTime, isRunning, periodLabel, homeState, awayState,
-        toggleTimer, formatTime, updateStat, nextPeriod
+        toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addSave
     } = useMatch();
 
     const { teams } = useTeams();
@@ -21,6 +23,30 @@ export function Stats() {
     const [homeTeamId, setHomeTeamId] = useState('');
     const [awayTeamId, setAwayTeamId] = useState('');
     const [matchName, setMatchName] = useState('');
+
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [customButtons, setCustomButtons] = useState<{ id: string, label: string, color: string }[]>([]);
+
+    const addCustomButton = () => {
+        const id = `custom_${Date.now()}`;
+        setCustomButtons(prev => [...prev, {
+            id,
+            label: 'Ny Stat',
+            color: 'bg-gradient-to-br from-purple-500 to-purple-700'
+        }]);
+    };
+
+    const updateCustomButtonLabel = (id: string, newLabel: string) => {
+        setCustomButtons(prev => prev.map(btn =>
+            btn.id === id ? { ...btn, label: newLabel } : btn
+        ));
+    };
+
+    const removeCustomButton = (id: string) => {
+        if (confirm('Er du sikker på at du vil slette denne knappen?')) {
+            setCustomButtons(prev => prev.filter(btn => btn.id !== id));
+        }
+    };
 
     // Auto-select first team if available
     useEffect(() => {
@@ -41,8 +67,8 @@ export function Stats() {
                 awayScore: awayState.score,
                 period: periodLabel,
                 detailedStats: {
-                    home: homeState.stats,
-                    away: awayState.stats
+                    home: { ...homeState.stats, ...mapCustomStats(homeState.stats) },
+                    away: { ...awayState.stats, ...mapCustomStats(awayState.stats) }
                 }
             });
             alert('Kamp lagret!');
@@ -50,6 +76,16 @@ export function Stats() {
             console.error(e);
             alert('Feil ved lagring');
         }
+    };
+
+    const mapCustomStats = (stats: any) => {
+        const mapped: any = {};
+        customButtons.forEach(btn => {
+            if (stats[btn.id]) {
+                mapped[btn.label] = stats[btn.id];
+            }
+        });
+        return mapped;
     };
 
     const activeState = activeSide === 'home' ? homeState : awayState;
@@ -120,6 +156,13 @@ export function Stats() {
                 <button onClick={toggleTimer} className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
                     {isRunning ? <Pause /> : <Play />}
                 </button>
+                <button
+                    onClick={undoLastStat}
+                    disabled={!canUndo}
+                    className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                    <RotateCcw />
+                </button>
                 <div className="w-px bg-white/10 mx-2" />
                 <button
                     onClick={() => { const n = prompt('Navn på kamp?'); if (n) setMatchName(n); }}
@@ -130,8 +173,28 @@ export function Stats() {
                 {matchName && <button onClick={handleSaveMatch} className="px-6 py-3 bg-green-700 hover:bg-green-600 rounded-lg font-bold">Lagre "{matchName}"</button>}
             </div>
 
+            <div className="flex justify-end mb-4">
+                <button
+                    onClick={() => setIsEditMode(!isEditMode)}
+                    className={clsx("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors",
+                        isEditMode ? "bg-yellow-500 text-black" : "bg-white/10 hover:bg-white/20"
+                    )}
+                >
+                    <Edit2 size={16} /> {isEditMode ? 'Ferdig' : 'Rediger Knapper'}
+                </button>
+            </div>
+
             {/* Stat Grid */}
             <div className="grid grid-cols-2 gap-4 md:gap-6">
+                <div className="col-span-2 flex justify-center mb-4">
+                    <div className="w-full max-w-sm">
+                        <GoalVisualizer
+                            saves={activeState.saves}
+                            onAddSave={(x, y) => addSave(activeSide, x, y)}
+                            teamName={activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
+                        />
+                    </div>
+                </div>
                 <StatButton
                     type="goal"
                     label="Mål"
@@ -146,13 +209,7 @@ export function Stats() {
                     onClick={() => updateStat(activeSide, 'miss')}
                     color="bg-gradient-to-br from-red-500 to-red-700"
                 />
-                <StatButton
-                    type="save"
-                    label="Redning"
-                    count={activeState.stats.save}
-                    onClick={() => updateStat(activeSide, 'save')}
-                    color="bg-gradient-to-br from-blue-500 to-blue-700"
-                />
+
                 <StatButton
                     type="tech"
                     label="Teknisk Feil"
@@ -160,6 +217,41 @@ export function Stats() {
                     onClick={() => updateStat(activeSide, 'tech')}
                     color="bg-gradient-to-br from-yellow-500 to-yellow-700"
                 />
+                {customButtons.map(btn => (
+                    <div key={btn.id} className="relative col-span-2 md:col-span-1">
+                        <StatButton
+                            type="other"
+                            label={btn.label}
+                            count={activeState.stats[btn.id] || 0}
+                            onClick={() => {
+                                if (isEditMode) {
+                                    const newLabel = prompt('Nytt navn:', btn.label);
+                                    if (newLabel) updateCustomButtonLabel(btn.id, newLabel);
+                                } else {
+                                    updateStat(activeSide, btn.id);
+                                }
+                            }}
+                            color={btn.color}
+                        />
+                        {isEditMode && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); removeCustomButton(btn.id); }}
+                                className="absolute -top-2 -right-2 bg-red-600 p-2 rounded-full shadow-lg hover:bg-red-500"
+                            >
+                                <Trash2 size={16} />
+                            </button>
+                        )}
+                    </div>
+                ))}
+
+                {isEditMode && (
+                    <button
+                        onClick={addCustomButton}
+                        className="col-span-2 flex items-center justify-center gap-2 py-4 border-2 border-dashed border-white/20 rounded-xl hover:border-white/40 hover:bg-white/5 transition-all text-gray-400 font-bold uppercase tracking-wider"
+                    >
+                        <Plus size={20} /> Legg til knapp
+                    </button>
+                )}
             </div>
 
             <div className="mt-8 text-center text-gray-500 text-sm">
