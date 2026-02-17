@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes, Navigate } from 'react-router-dom';
+import { HashRouter, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './components/features/AuthProvider';
 import { Layout } from './components/layout/Layout';
 import { Home } from './pages/Home';
@@ -18,7 +18,7 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 
 function App() {
   return (
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
+    <HashRouter>
       <AuthProvider>
         <Routes>
           <Route element={<Layout />}>
@@ -39,7 +39,7 @@ function App() {
           </Route>
         </Routes>
       </AuthProvider>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
