@@ -112,14 +112,14 @@ export function Stats() {
                             <option value="Hjemme">Hjemme</option>
                             {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                         </select>
-                        <div className="text-7xl font-black mt-2 text-primary">{homeState.score}</div>
+                        <div className="text-5xl md:text-7xl font-black mt-2 text-primary">{homeState.score}</div>
                     </div>
 
                     {/* Timer & Period */}
                     <div className="px-8 flex flex-col items-center gap-4">
                         <div
                             onClick={toggleTimer}
-                            className="text-4xl font-mono font-bold bg-black px-6 py-2 rounded-lg border border-white/20 cursor-pointer hover:border-primary transition-colors select-none tabular-nums"
+                            className="text-2xl md:text-4xl font-mono font-bold bg-black px-4 md:px-6 py-2 rounded-lg border border-white/20 cursor-pointer hover:border-primary transition-colors select-none tabular-nums"
                         >
                             {formatTime(matchTime)}
                         </div>
@@ -146,20 +146,20 @@ export function Stats() {
                             <option value="Borte">Borte</option>
                             {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                         </select>
-                        <div className="text-7xl font-black mt-2 text-secondary">{awayState.score}</div>
+                        <div className="text-5xl md:text-7xl font-black mt-2 text-secondary">{awayState.score}</div>
                     </div>
                 </div>
             </div>
 
             {/* Control Actions */}
             <div className="flex justify-center gap-4 mb-8">
-                <button onClick={toggleTimer} className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
+                <button onClick={toggleTimer} className="p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors">
                     {isRunning ? <Pause /> : <Play />}
                 </button>
                 <button
                     onClick={undoLastStat}
                     disabled={!canUndo}
-                    className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="p-3 md:p-4 rounded-full bg-white/10 hover:bg-white/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                     <RotateCcw />
                 </button>
