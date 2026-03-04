@@ -4,7 +4,14 @@
 - [x] Fjern standar annet knapp, og gjøra at du må legge til knapper viss det skal komme opp. 
 - [x] Lag en knapp hvor du kan registrer annen statestikk under nåværende - knapper på statestikksiden. (Endret til Mål-visualisering) 
 - [x] Når du klikker på lag så spinner bare denne siden. Her skal det være en meny hvor du kan registrer lag. 
-- Fikse github
-- Gjør sånn at du kan importere kamp inn i statestikk siden. 
-- Lag en side som du kommer til når du klikker inn på et lag inne på lagsiden. Her skal det være statestikk fra sist kamp, med tilbakemelding om har forbedret noen deler av statestikken. 
+- [x] Fikse github
+- [x] PÅ lagsiden. GJør at når du har registert et lag så følger dette din bruker. Viss du klikker inn på laget så kommer du inn på en ny side som er hvor du kan analysere statestikken. 
+    - Det skal være en hurtigmeny som viser endring i statestikken fra tidligere kamper og sist kamp, blant annet. 
+- [] Gjør sånn at du kan importere kampstatestikk til lagsiden og til det aktuelle laget
+- [x] Lag en side som du kommer til når du klikker inn på et lag inne på lagsiden. Her skal det være statestikk fra sist kamp, med tilbakemelding om har forbedret noen deler av statestikken. 
+- [] Gjør det slik at statestikken registeres på et underliggende skjema. 
+- [] Lag en knapp som sier lagre statestikk. 
+    -[] Når man trykker på denne så kommer det underliggende skjemaet inn på lagets statestikkside. 
+- [] Gjør om mål statestikken til et lignende format som reddninger, men i fargen grønn istedenfor. 
+- [] Lag også en statestikk som representerer en håndballbane. Lag den slik at du kan klikke, hvor på banen spillerne skyter fra. 
 

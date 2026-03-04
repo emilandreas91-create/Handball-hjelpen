@@ -24,6 +24,15 @@ export interface TeamState {
     saves: SaveLocation[];
 }
 
+
+export interface MatchData {
+    matchTime: number;
+    period: number;
+    homeState: TeamState;
+    awayState: TeamState;
+    history: { side: TeamSide, type: StatType | string, data?: any }[];
+}
+
 export function useMatch() {
     const [matchTime, setMatchTime] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
@@ -156,6 +165,15 @@ export function useMatch() {
         }
     };
 
+    const loadMatch = (data: MatchData) => {
+        setMatchTime(data.matchTime);
+        setPeriod(data.period);
+        setHomeState(data.homeState);
+        setAwayState(data.awayState);
+        setHistory(data.history);
+        setIsRunning(false);
+    };
+
     return {
         matchTime,
         isRunning,
@@ -170,6 +188,8 @@ export function useMatch() {
         addSave,
         undoLastStat,
         canUndo: history.length > 0,
-        nextPeriod
+        nextPeriod,
+        loadMatch,
+        history // Expose history for export
     };
 }

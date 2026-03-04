@@ -1,5 +1,6 @@
 import { Trash2, Users } from 'lucide-react';
 import { Team } from '../../hooks/useTeams';
+import { Link } from 'react-router-dom';
 
 interface TeamCardProps {
     team: Team;
@@ -8,7 +9,7 @@ interface TeamCardProps {
 
 export function TeamCard({ team, onDelete }: TeamCardProps) {
     return (
-        <div className="bg-card border border-white/5 rounded-xl p-6 hover:border-primary/50 transition-all group relative overflow-hidden">
+        <Link to={`/teams/${team.id}`} className="bg-card border border-white/5 rounded-xl p-6 hover:border-primary/50 transition-all group relative overflow-hidden block">
             {/* Glow Effect */}
             <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
@@ -24,13 +25,13 @@ export function TeamCard({ team, onDelete }: TeamCardProps) {
                 </div>
 
                 <button
-                    onClick={(e) => { e.stopPropagation(); onDelete(team.id); }}
-                    className="p-2 text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(team.id); }}
+                    className="p-2 text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 z-20 relative"
                     title="Slett lag"
                 >
                     <Trash2 size={20} />
                 </button>
             </div>
-        </div>
+        </Link>
     );
 }

@@ -5,6 +5,7 @@ import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { Teams } from './pages/Teams';
 import { Stats } from './pages/Stats';
+import { TeamDetails } from './pages/TeamDetails';
 
 // Protected Route Wrapper
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -34,6 +35,11 @@ function App() {
             <Route path="/teams" element={
               <RequireAuth>
                 <Teams />
+              </RequireAuth>
+            } />
+            <Route path="/teams/:teamId" element={
+              <RequireAuth>
+                <TeamDetails />
               </RequireAuth>
             } />
           </Route>
