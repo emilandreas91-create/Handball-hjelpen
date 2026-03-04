@@ -9,9 +9,10 @@
     - Det skal være en hurtigmeny som viser endring i statestikken fra tidligere kamper og sist kamp, blant annet. 
 - [] Gjør sånn at du kan importere kampstatestikk til lagsiden og til det aktuelle laget
 - [x] Lag en side som du kommer til når du klikker inn på et lag inne på lagsiden. Her skal det være statestikk fra sist kamp, med tilbakemelding om har forbedret noen deler av statestikken. 
-- [] Gjør det slik at statestikken registeres på et underliggende skjema. 
-- [] Lag en knapp som sier lagre statestikk. 
-    -[] Når man trykker på denne så kommer det underliggende skjemaet inn på lagets statestikkside. 
-- [] Gjør om mål statestikken til et lignende format som reddninger, men i fargen grønn istedenfor. 
-- [] Lag også en statestikk som representerer en håndballbane. Lag den slik at du kan klikke, hvor på banen spillerne skyter fra. 
-
+- [x] Gjør det slik at statestikken registeres på et underliggende skjema. 
+- [x] Lag en knapp som sier lagre statestikk. 
+    -[x] Når man trykker på denne så kommer det underliggende skjemaet inn på lagets statestikkside. 
+- [x] Gjør om mål statestikken til et lignende format som reddninger, men i fargen grønn istedenfor. 
+- [x] Lag også en statestikk som representerer en håndballbane. Lag den slik at du kan klikke, hvor på banen spillerne skyter fra. 
+[] Når man skal analysere statestikken til pause. Gjør at banebilde blir et bilde med statestikk over hvor på banen man redder mest i fra og hvor man slipper inn flest mål. 
+[] Lag en oversiktg slik at mål og lignende blir registere i en tidslinje. Slik at man kan gå tilbake å se når i kampen de ulike hendelsene skjedde. 

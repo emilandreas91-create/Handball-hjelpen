@@ -3,17 +3,18 @@ import { useMatch, TeamSide } from '../hooks/useMatch';
 import { useTeams } from '../hooks/useTeams';
 import { StatButton } from '../components/features/StatButton';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
+import { CourtVisualizer } from '../components/features/CourtVisualizer';
 import { Play, Pause, Save as SaveIcon, RotateCcw } from 'lucide-react';
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/AuthProvider';
 import { clsx } from 'clsx';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, X } from 'lucide-react';
 
 export function Stats() {
     const {
         matchTime, isRunning, periodLabel, homeState, awayState,
-        toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addSave
+        toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addCombinedShot
     } = useMatch();
 
     const { teams } = useTeams();
@@ -26,6 +27,21 @@ export function Stats() {
 
     const [isEditMode, setIsEditMode] = useState(false);
     const [customButtons, setCustomButtons] = useState<{ id: string, label: string, color: string }[]>([]);
+
+    const [pendingShot, setPendingShot] = useState<{ x: number, y: number } | null>(null);
+    const [pendingGoalPlacement, setPendingGoalPlacement] = useState<{ x: number, y: number } | null>(null);
+
+    const handleCombinedShot = (result: 'goal' | 'save' | 'miss') => {
+        if (!pendingShot || !pendingGoalPlacement) return;
+        addCombinedShot(activeSide, pendingShot.x, pendingShot.y, pendingGoalPlacement.x, pendingGoalPlacement.y, result);
+        setPendingShot(null);
+        setPendingGoalPlacement(null);
+    };
+
+    const cancelPendingShot = () => {
+        setPendingShot(null);
+        setPendingGoalPlacement(null);
+    };
 
     const addCustomButton = () => {
         const id = `custom_${Date.now()}`;
@@ -185,38 +201,57 @@ export function Stats() {
             </div>
 
             {/* Stat Grid */}
-            <div className="grid grid-cols-2 gap-4 md:gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+
+                {/* Court Visualizer (Full Width on mobile, half on large) */}
                 <div className="col-span-2 flex justify-center mb-4">
-                    <div className="w-full max-w-sm">
-                        <GoalVisualizer
-                            saves={activeState.saves}
-                            onAddSave={(x, y) => addSave(activeSide, x, y)}
+                    <div className="w-full">
+                        <CourtVisualizer
+                            locations={activeState.shotLocations}
+                            onAddLocation={(x, y) => setPendingShot({ x, y })}
                             teamName={activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
                         />
                     </div>
                 </div>
-                <StatButton
-                    type="goal"
-                    label="Mål"
-                    count={activeState.stats.goal}
-                    onClick={() => updateStat(activeSide, 'goal')}
-                    color="bg-gradient-to-br from-green-500 to-green-700"
-                />
-                <StatButton
-                    type="miss"
-                    label="Skuddbom"
-                    count={activeState.stats.miss}
-                    onClick={() => updateStat(activeSide, 'miss')}
-                    color="bg-gradient-to-br from-red-500 to-red-700"
-                />
 
-                <StatButton
-                    type="tech"
-                    label="Teknisk Feil"
-                    count={activeState.stats.tech}
-                    onClick={() => updateStat(activeSide, 'tech')}
-                    color="bg-gradient-to-br from-yellow-500 to-yellow-700"
-                />
+                {/* Goal/Saves Visualizers */}
+                <div className="col-span-2 flex flex-col sm:flex-row gap-4 justify-center mb-4">
+                    <div className="w-full sm:w-1/2">
+                        <GoalVisualizer
+                            saves={activeState.saves}
+                            teamName={activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
+                            type="save"
+                            title="Redninger"
+                        />
+                    </div>
+                    <div className="w-full sm:w-1/2">
+                        <GoalVisualizer
+                            saves={activeState.goalLocations}
+                            teamName={activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
+                            type="goal"
+                            title="Mål"
+                        />
+                    </div>
+                </div>
+
+                {/* Stats Buttons */}
+                <div className="col-span-2 grid grid-cols-2 gap-4">
+                    <StatButton
+                        type="miss"
+                        label="Skuddbom"
+                        count={activeState.stats.miss}
+                        onClick={() => updateStat(activeSide, 'miss')}
+                        color="bg-gradient-to-br from-red-500 to-red-700"
+                    />
+
+                    <StatButton
+                        type="tech"
+                        label="Teknisk Feil"
+                        count={activeState.stats.tech}
+                        onClick={() => updateStat(activeSide, 'tech')}
+                        color="bg-gradient-to-br from-yellow-500 to-yellow-700"
+                    />
+                </div>
                 {customButtons.map(btn => (
                     <div key={btn.id} className="relative col-span-2 md:col-span-1">
                         <StatButton
@@ -259,6 +294,68 @@ export function Stats() {
                     {activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
                 </span>
             </div>
+
+            {/* Shot Result Modal */}
+            {pendingShot && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                    <div className="bg-card w-full max-w-md md:max-w-lg rounded-3xl p-6 border border-white/10 shadow-2xl relative">
+                        <button
+                            onClick={cancelPendingShot}
+                            className="absolute right-4 top-4 p-2 bg-white/10 hover:bg-white/20 text-gray-400 hover:text-white rounded-full transition-colors"
+                        >
+                            <X size={20} />
+                        </button>
+
+                        <h2 className="text-2xl font-bold text-center mb-2 mt-4">
+                            {!pendingGoalPlacement ? 'Hvor gikk skuddet?' : 'Hva ble resultatet?'}
+                        </h2>
+                        <p className="text-center text-gray-400 mb-6 text-sm">
+                            {!pendingGoalPlacement
+                                ? 'Trykk i buret for å plassere skuddet.'
+                                : 'Velg om det ble mål, redning eller bom.'}
+                        </p>
+
+                        {!pendingGoalPlacement ? (
+                            <div className="mb-4">
+                                <GoalVisualizer
+                                    saves={[]}
+                                    onAddSave={(x, y) => setPendingGoalPlacement({ x, y })}
+                                    teamName={activeSide === 'home' ? (homeTeamId || 'Hjemme') : (awayTeamId || 'Borte')}
+                                    type="goal"
+                                    title="Plassering i Mål"
+                                />
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-4 mt-4">
+                                <button
+                                    onClick={() => handleCombinedShot('goal')}
+                                    className="w-full py-4 text-xl font-bold rounded-xl bg-gradient-to-br from-green-500 to-green-700 hover:scale-[1.02] transition-transform shadow-lg"
+                                >
+                                    Mål
+                                </button>
+                                <button
+                                    onClick={() => handleCombinedShot('save')}
+                                    className="w-full py-4 text-xl font-bold rounded-xl bg-gradient-to-br from-red-500 to-red-700 hover:scale-[1.02] transition-transform shadow-lg"
+                                >
+                                    Redning
+                                </button>
+                                <button
+                                    onClick={() => handleCombinedShot('miss')}
+                                    className="w-full py-4 text-xl font-bold rounded-xl bg-gradient-to-br from-yellow-500 to-yellow-700 hover:scale-[1.02] transition-transform shadow-lg text-black"
+                                >
+                                    Skuddbom
+                                </button>
+                                <button
+                                    onClick={() => setPendingGoalPlacement(null)}
+                                    className="w-full py-3 mt-2 text-sm font-semibold text-gray-400 rounded-xl bg-white/5 hover:bg-white/10 hover:text-white transition-colors"
+                                >
+                                    Fjern plassering og velg på nytt
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
