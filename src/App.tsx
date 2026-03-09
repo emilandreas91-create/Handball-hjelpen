@@ -1,5 +1,6 @@
 import { HashRouter, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './components/features/AuthProvider';
+import { MatchProvider } from './hooks/useMatch';
 import { Layout } from './components/layout/Layout';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
@@ -21,6 +22,7 @@ function App() {
   return (
     <HashRouter>
       <AuthProvider>
+        <MatchProvider>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Home />} />
@@ -44,6 +46,7 @@ function App() {
             } />
           </Route>
         </Routes>
+        </MatchProvider>
       </AuthProvider>
     </HashRouter>
   );
