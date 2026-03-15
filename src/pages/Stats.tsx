@@ -14,7 +14,7 @@ import { Plus, Edit2, Trash2, X } from 'lucide-react';
 export function Stats() {
     const {
         matchTime, isRunning, periodLabel, homeState, awayState,
-        toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addCombinedShot
+        toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addCombinedShot, history
     } = useMatch();
 
     const { teams } = useTeams();
@@ -83,8 +83,8 @@ export function Stats() {
                 awayScore: awayState.score,
                 period: periodLabel,
                 detailedStats: {
-                    home: { ...homeState.stats, ...mapCustomStats(homeState.stats) },
-                    away: { ...awayState.stats, ...mapCustomStats(awayState.stats) }
+                    home: { ...homeState.stats, ...mapCustomStats(homeState.stats), history: history.filter(h => h.side === 'home') },
+                    away: { ...awayState.stats, ...mapCustomStats(awayState.stats), history: history.filter(h => h.side === 'away') }
                 }
             });
             alert('Kamp lagret!');

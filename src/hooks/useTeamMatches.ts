@@ -7,6 +7,7 @@ export interface MatchStat {
     goal?: number;
     miss?: number;
     tech?: number;
+    history?: { side: string, type: string, data?: any }[];
     [key: string]: any;
 }
 
