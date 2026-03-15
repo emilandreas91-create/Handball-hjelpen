@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
 
 export type TeamSide = 'home' | 'away';
 export type StatType = 'goal' | 'miss' | 'save' | 'tech' | 'other';
@@ -35,7 +35,31 @@ export interface MatchData {
     history: { side: TeamSide, type: StatType | string, data?: any }[];
 }
 
-export function useMatch() {
+interface MatchContextType {
+    matchTime: number;
+    isRunning: boolean;
+    period: number;
+    periodLabel: string;
+    homeState: TeamState;
+    awayState: TeamState;
+    toggleTimer: () => void;
+    resetTimer: () => void;
+    formatTime: (seconds: number) => string;
+    updateStat: (side: TeamSide, type: StatType | string) => void;
+    addSave: (side: TeamSide, x: number, y: number) => void;
+    addGoalLocation: (side: TeamSide, x: number, y: number) => void;
+    addShotLocation: (side: TeamSide, x: number, y: number) => void;
+    addCombinedShot: (side: TeamSide, courtX: number, courtY: number, goalX: number, goalY: number, result: 'goal' | 'save' | 'miss') => void;
+    undoLastStat: () => void;
+    canUndo: boolean;
+    nextPeriod: () => void;
+    loadMatch: (data: MatchData) => void;
+    history: { side: TeamSide, type: StatType | string, data?: any }[];
+}
+
+const MatchContext = createContext<MatchContextType | undefined>(undefined);
+
+export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [matchTime, setMatchTime] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const [period, setPeriod] = useState(1);
@@ -262,7 +286,7 @@ export function useMatch() {
         setIsRunning(false);
     };
 
-    return {
+    const value: MatchContextType = {
         matchTime,
         isRunning,
         period,
@@ -281,6 +305,16 @@ export function useMatch() {
         canUndo: history.length > 0,
         nextPeriod,
         loadMatch,
-        history // Expose history for export
+        history
     };
+
+    return React.createElement(MatchContext.Provider, { value }, children);
+}
+
+export function useMatchContext() {
+    const context = useContext(MatchContext);
+    if (context === undefined) {
+        throw new Error('useMatchContext must be used within a MatchProvider');
+    }
+    return context;
 }

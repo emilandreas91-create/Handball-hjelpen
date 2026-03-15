@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useMatch, TeamSide } from '../hooks/useMatch';
+import { useMatchContext, TeamSide } from '../hooks/useMatch';
 import { useTeams } from '../hooks/useTeams';
 import { StatButton } from '../components/features/StatButton';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
@@ -15,7 +15,7 @@ export function Stats() {
     const {
         matchTime, isRunning, periodLabel, homeState, awayState,
         toggleTimer, formatTime, updateStat, nextPeriod, undoLastStat, canUndo, addCombinedShot, history
-    } = useMatch();
+    } = useMatchContext();
 
     const { teams } = useTeams();
     const { currentUser } = useAuth();
