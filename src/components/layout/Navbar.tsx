@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, ArrowRight, LogIn, Menu, Users, X } from 'lucide-react';
+import { Activity, ArrowRight, LogIn, Menu, Play, Users, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '../features/useAuth';
 
@@ -28,6 +28,7 @@ export function Navbar() {
         ? [
             { path: '/', label: 'Oversikt' },
             { path: '/stats', label: 'Live kamp', icon: Activity },
+            { path: '/tactics', label: 'Taktikk', icon: Play },
             { path: '/teams', label: 'Lag', icon: Users },
         ]
         : [

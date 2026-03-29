@@ -11,6 +11,8 @@ import { Login } from './pages/Login';
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const Stats = lazy(() => import('./pages/Stats').then((module) => ({ default: module.Stats })));
 const TeamDetails = lazy(() => import('./pages/TeamDetails').then((module) => ({ default: module.TeamDetails })));
+const Tactics = lazy(() => import('./pages/Tactics').then((module) => ({ default: module.Tactics })));
+const TacticPresentation = lazy(() => import('./pages/TacticPresentation').then((module) => ({ default: module.TacticPresentation })));
 
 function RouteFallback() {
   return (
@@ -67,6 +69,20 @@ function App() {
               <RequireAuth>
                 <Suspense fallback={<RouteFallback />}>
                   <TeamDetails />
+                </Suspense>
+              </RequireAuth>
+            } />
+            <Route path="/tactics" element={
+              <RequireAuth>
+                <Suspense fallback={<RouteFallback />}>
+                  <Tactics />
+                </Suspense>
+              </RequireAuth>
+            } />
+            <Route path="/tactics/:tacticId/present" element={
+              <RequireAuth>
+                <Suspense fallback={<RouteFallback />}>
+                  <TacticPresentation />
                 </Suspense>
               </RequireAuth>
             } />
