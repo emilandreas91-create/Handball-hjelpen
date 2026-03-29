@@ -1,54 +1,145 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { useTeams } from '../hooks/useTeams';
-import { useTeamMatches, Match, MatchStat } from '../hooks/useTeamMatches';
-import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Minus, Shield, Activity } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
+import {
+    Activity,
+    AlertTriangle,
+    ArrowLeft,
+    ArrowRight,
+    ClipboardList,
+    Minus,
+    Shield,
+    Target,
+    TrendingDown,
+    TrendingUp,
+} from 'lucide-react';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
+import { EmptyState } from '../components/ui/EmptyState';
+import { LoadingState } from '../components/ui/LoadingState';
+import { useTeamMatches, type Match } from '../hooks/useTeamMatches';
+import { useTeams } from '../hooks/useTeams';
+import {
+    formatDateLabel,
+    formatMatchTimeLabel,
+    getShootingPercentage,
+    resolveMatchTeamSide,
+    type MatchEvent,
+    type StoredTeamStats,
+} from '../lib/matchData';
+
+type ViewMode = 'general' | 'goalkeeper';
+type CourtZoneKey = '6m' | '9m' | 'Kant';
+
+interface CombinedShotData {
+    courtX: number;
+    courtY: number;
+    goalX: number;
+    goalY: number;
+    result: 'goal' | 'save' | 'miss';
+}
+
+interface TrendCardProps {
+    label: string;
+    value: number;
+    helper?: string;
+    trendIcon: JSX.Element;
+    accentClassName: string;
+}
+
+function TrendCard({ label, value, helper, trendIcon, accentClassName }: TrendCardProps) {
+    return (
+        <div className="rounded-3xl border border-white/10 bg-card/80 p-6 shadow-xl">
+            <div className={`h-1 w-16 rounded-full ${accentClassName}`} />
+            <div className="mt-5 flex items-start justify-between gap-4">
+                <div>
+                    <p className="text-sm text-gray-400">{label}</p>
+                    <p className="mt-2 text-4xl font-black text-white">{value}</p>
+                    {helper ? <p className="mt-3 text-xs text-gray-500">{helper}</p> : null}
+                </div>
+                <div className="rounded-2xl bg-white/5 p-3">{trendIcon}</div>
+            </div>
+        </div>
+    );
+}
 
 export function TeamDetails() {
     const { teamId } = useParams<{ teamId: string }>();
-    const { teams, loading: teamsLoading } = useTeams();
-    const [viewMode, setViewMode] = useState<'general' | 'goalkeeper'>('general');
+    const { teams, loading: teamsLoading, error: teamsError } = useTeams();
+    const [viewMode, setViewMode] = useState<ViewMode>('general');
 
-    const team = teams.find(t => t.id === teamId);
-    const { matches, loading: matchesLoading } = useTeamMatches(team?.name);
+    const team = teams.find((entry) => entry.id === teamId);
+    const { matches, loading: matchesLoading, error: matchesError } = useTeamMatches({
+        id: team?.id,
+        name: team?.name,
+        aliases: team?.aliases,
+    });
 
     if (teamsLoading || matchesLoading) {
         return (
-            <div className="flex justify-center py-20">
-                <Loader2 className="animate-spin text-primary" size={48} />
-            </div>
+            <LoadingState
+                title="Laster lagoversikt"
+                message="Vi samler laginformasjon og kampdata for denne siden."
+            />
         );
     }
 
     if (!team) {
         return (
-            <div className="text-center py-20">
-                <h2 className="text-2xl font-bold mb-4">Fant ikke laget</h2>
-                <Link to="/teams" className="text-primary hover:underline">Tilbake til Mine Lag</Link>
-            </div>
+            <EmptyState
+                icon={AlertTriangle}
+                title="Fant ikke laget"
+                description="Laget du prøvde å åpne finnes ikke lenger, eller du mangler tilgang til det."
+                action={
+                    <Link
+                        to="/teams"
+                        className="rounded-full bg-primary px-5 py-3 text-sm font-bold text-black transition hover:bg-white"
+                    >
+                        Tilbake til lagoversikt
+                    </Link>
+                }
+            />
         );
     }
 
-    // Helper to extract team stats from a match
-    const getTeamStats = (match: Match): MatchStat => {
-        return match.homeTeam === team.name ? match.detailedStats.home : match.detailedStats.away;
-    }
+    const getTeamStats = (match: Match): StoredTeamStats => {
+        const side = resolveMatchTeamSide(match, {
+            id: team.id,
+            name: team.name,
+            aliases: team.aliases,
+        }) ?? 'home';
 
-    // Calculate quick stats (comparing the latest match vs the average of previous matches)
+        return side === 'home' ? match.detailedStats.home : match.detailedStats.away;
+    };
+
+    const getOpponentStats = (match: Match): StoredTeamStats => {
+        const side = resolveMatchTeamSide(match, {
+            id: team.id,
+            name: team.name,
+            aliases: team.aliases,
+        }) ?? 'home';
+
+        return side === 'home' ? match.detailedStats.away : match.detailedStats.home;
+    };
+
     const latestMatch = matches[0];
     const previousMatches = matches.slice(1);
 
     const calculateAverageStats = (matchesList: Match[]) => {
-        if (matchesList.length === 0) return null;
-        const total = matchesList.reduce((acc, m) => {
-            const stats = getTeamStats(m);
-            return {
-                goal: acc.goal + (stats.goal || 0),
-                miss: acc.miss + (stats.miss || 0),
-                tech: acc.tech + (stats.tech || 0),
-            };
-        }, { goal: 0, miss: 0, tech: 0 });
+        if (matchesList.length === 0) {
+            return null;
+        }
+
+        const total = matchesList.reduce(
+            (acc, match) => {
+                const stats = getTeamStats(match);
+
+                return {
+                    goal: acc.goal + (stats.goal || 0),
+                    miss: acc.miss + (stats.miss || 0),
+                    tech: acc.tech + (stats.tech || 0),
+                };
+            },
+            { goal: 0, miss: 0, tech: 0 },
+        );
 
         return {
             goal: total.goal / matchesList.length,
@@ -61,53 +152,71 @@ export function TeamDetails() {
     const seasonAvg = calculateAverageStats(matches);
     const latestStats = latestMatch ? getTeamStats(latestMatch) : null;
 
-    // Trend data for the last 5 matches
-    const last5Matches = matches.slice(0, 5).reverse();
-    const trendData = last5Matches.map(m => {
-        const stats = getTeamStats(m);
-        const goals = stats.goal || 0;
-        const misses = stats.miss || 0;
-        const totalShots = goals + misses;
-        const percentage = totalShots > 0 ? Math.round((goals / totalShots) * 100) : 0;
+    const trendData = matches
+        .slice(0, 5)
+        .reverse()
+        .map((match) => ({
+            id: match.id,
+            matchName: match.name,
+            percentage: getShootingPercentage(getTeamStats(match)),
+        }));
 
-        return {
-            matchName: m.name,
-            percentage
-        };
-    });
+    const renderTrend = (current: number, previousAverage: number | null | undefined, invertGood = false) => {
+        if (previousAverage === null || previousAverage === undefined) {
+            return <Minus className="text-gray-500" size={20} />;
+        }
 
-    const renderTrend = (current: number, previousAvg: number | null | undefined, invertGood: boolean = false) => {
-        if (previousAvg === null || previousAvg === undefined) return <Minus className="text-gray-500" size={20} />;
-
-        const diff = current - previousAvg;
-        if (Math.abs(diff) < 0.1) return <Minus className="text-gray-500" size={20} />;
+        const diff = current - previousAverage;
+        if (Math.abs(diff) < 0.1) {
+            return <Minus className="text-gray-500" size={20} />;
+        }
 
         const isGood = invertGood ? diff < 0 : diff > 0;
         return isGood ? <TrendingUp className="text-green-500" size={20} /> : <TrendingDown className="text-red-500" size={20} />;
-    }
+    };
 
-    // --- GOALKEEPER FOCUS LOGIC ---
-    // Get all shots against this team
-    const opponentShots = matches.flatMap(m => {
-        const side = m.homeTeam === team?.name ? 'home' : 'away';
-        const opponentSide = side === 'home' ? 'away' : 'home';
-        const opponentStatsObject = opponentSide === 'home' ? m.detailedStats.home : m.detailedStats.away;
+    const toCombinedShotData = (event: MatchEvent): CombinedShotData | null => {
+        if (event.type !== 'combinedShot' || !event.data) {
+            return null;
+        }
 
-        return opponentStatsObject.history?.filter(h => h.type === 'combinedShot' && h.data) || [];
+        const courtX = typeof event.data.courtX === 'number' ? event.data.courtX : null;
+        const courtY = typeof event.data.courtY === 'number' ? event.data.courtY : null;
+        const goalX = typeof event.data.goalX === 'number' ? event.data.goalX : null;
+        const goalY = typeof event.data.goalY === 'number' ? event.data.goalY : null;
+        const result = event.data.result;
+
+        if (
+            courtX === null ||
+            courtY === null ||
+            goalX === null ||
+            goalY === null ||
+            (result !== 'goal' && result !== 'save' && result !== 'miss')
+        ) {
+            return null;
+        }
+
+        return { courtX, courtY, goalX, goalY, result };
+    };
+
+    const opponentShots = matches.flatMap((match) => {
+        return getOpponentStats(match).history
+            .map((event) => toCombinedShotData(event))
+            .filter((item): item is CombinedShotData => item !== null);
     });
 
-    // Helper to get court zone
-    const getCourtZone = (x: number, y: number) => {
-        // Court visualizer has x: 0-100, y: 0-100
-        // Top of court is y=0 (goal area). 9m line is roughly around y=65 in our court visualizer, but let's base it on typical bounds
-        // In CourtVisualizer, goal is at top. 6m is around y=40, 9m is around y=65.
-        // Let's make an approximation:
-        if (x < 15 || x > 85) return 'Kant';
-        if (y < 45) return '6m';
+    const getCourtZone = (x: number, y: number): CourtZoneKey => {
+        if (x < 15 || x > 85) {
+            return 'Kant';
+        }
+
+        if (y < 45) {
+            return '6m';
+        }
+
         return '9m';
     };
 
-    // Helper to get goal zone (3x3 grid)
     const getGoalZone = (x: number, y: number) => {
         const col = x < 33.3 ? 0 : x < 66.6 ? 1 : 2;
         const row = y < 33.3 ? 0 : y < 66.6 ? 1 : 2;
@@ -115,23 +224,25 @@ export function TeamDetails() {
     };
 
     const calculateHeatmapData = () => {
-        const zones: Record<string, { saves: number, total: number }> = {};
-        for (let r = 0; r < 3; r++) {
-            for (let c = 0; c < 3; c++) {
-                zones[`${c}-${r}`] = { saves: 0, total: 0 };
+        const zones: Record<string, { saves: number; total: number }> = {};
+
+        for (let row = 0; row < 3; row += 1) {
+            for (let col = 0; col < 3; col += 1) {
+                zones[`${col}-${row}`] = { saves: 0, total: 0 };
             }
         }
 
-        opponentShots.forEach(shot => {
-            if (!shot.data) return;
-            const { goalX, goalY, result } = shot.data;
-            if (result !== 'goal' && result !== 'save') return;
+        opponentShots.forEach((shot) => {
+            if (shot.result !== 'goal' && shot.result !== 'save') {
+                return;
+            }
 
-            const { col, row } = getGoalZone(goalX, goalY);
+            const { col, row } = getGoalZone(shot.goalX, shot.goalY);
             const key = `${col}-${row}`;
-            if (zones[key]) {
-                zones[key].total++;
-                if (result === 'save') zones[key].saves++;
+            zones[key].total += 1;
+
+            if (shot.result === 'save') {
+                zones[key].saves += 1;
             }
         });
 
@@ -140,217 +251,355 @@ export function TeamDetails() {
             return {
                 zoneX,
                 zoneY,
-                savePercentage: data.total > 0 ? Math.round((data.saves / data.total) * 100) : 0
+                savePercentage: data.total > 0 ? Math.round((data.saves / data.total) * 100) : 0,
             };
         });
     };
 
     const calculateCourtZoneStats = () => {
-        const courtZones = {
+        const courtZones: Record<CourtZoneKey, { saves: number; total: number }> = {
             '6m': { saves: 0, total: 0 },
             '9m': { saves: 0, total: 0 },
-            'Kant': { saves: 0, total: 0 }
+            Kant: { saves: 0, total: 0 },
         };
 
-        opponentShots.forEach(shot => {
-            if (!shot.data) return;
-            const { courtX, courtY, result } = shot.data;
-            if (result !== 'goal' && result !== 'save') return;
+        opponentShots.forEach((shot) => {
+            if (shot.result !== 'goal' && shot.result !== 'save') {
+                return;
+            }
 
-            const zone = getCourtZone(courtX, courtY);
-            // @ts-ignore
-            if (courtZones[zone]) {
-                // @ts-ignore
-                courtZones[zone].total++;
-                // @ts-ignore
-                if (result === 'save') courtZones[zone].saves++;
+            const zone = getCourtZone(shot.courtX, shot.courtY);
+            courtZones[zone].total += 1;
+
+            if (shot.result === 'save') {
+                courtZones[zone].saves += 1;
             }
         });
 
         return [
             { name: '6 meter', data: courtZones['6m'] },
             { name: '9 meter', data: courtZones['9m'] },
-            { name: 'Kant', data: courtZones['Kant'] }
+            { name: 'Kant', data: courtZones.Kant },
         ];
     };
 
     const heatmapData = calculateHeatmapData();
     const courtZoneStats = calculateCourtZoneStats();
-    // --- END GOALKEEPER LOGIC ---
+    const hasGoalkeeperData = opponentShots.length > 0;
 
     return (
-        <div className="max-w-4xl mx-auto">
-            <div className="mb-8 flex items-center gap-4">
-                <Link to="/teams" className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors">
-                    <ArrowLeft size={24} />
-                </Link>
-                <h1 className="text-4xl font-black uppercase tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-500">
-                    {team.name}
-                </h1>
-            </div>
+        <div className="space-y-8">
+            <section className="rounded-[2rem] border border-white/10 bg-card/85 p-6 shadow-2xl backdrop-blur-xl md:p-8">
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="flex items-start gap-4">
+                        <Link
+                            to="/teams"
+                            className="mt-1 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:border-primary/40 hover:bg-white/10"
+                            aria-label="Tilbake til lag"
+                        >
+                            <ArrowLeft size={20} />
+                        </Link>
 
-            <div className="flex justify-center mb-8 bg-black/20 p-1 rounded-xl w-fit mx-auto border border-white/5">
-                <button
-                    onClick={() => setViewMode('general')}
-                    className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'general' ? 'bg-primary text-black shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                >
-                    <Activity size={16} /> Generelt
-                </button>
-                <button
-                    onClick={() => setViewMode('goalkeeper')}
-                    className={`flex items-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'goalkeeper' ? 'bg-blue-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-                >
-                    <Shield size={16} /> Målvakts-fokus
-                </button>
+                        <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">
+                                Lagdetaljer
+                            </p>
+                            <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
+                                {team.name}
+                            </h1>
+                            <p className="mt-4 max-w-2xl text-base leading-8 text-gray-300">
+                                Her får du en samlet oversikt over siste kamp, enkel trendvisning og historikk for laget.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                            <p className="text-sm text-gray-400">Registrerte kamper</p>
+                            <p className="mt-2 text-3xl font-black text-white">{matches.length}</p>
+                        </div>
+                        <Link
+                            to="/stats"
+                            className="flex items-center justify-between rounded-3xl border border-primary/30 bg-primary/10 p-5 text-white transition hover:border-primary hover:bg-primary/15"
+                        >
+                            <div>
+                                <p className="text-sm text-primary">Neste steg</p>
+                                <p className="mt-2 text-lg font-bold">Start ny kamp</p>
+                            </div>
+                            <ArrowRight className="text-primary" />
+                        </Link>
+                    </div>
+                </div>
+            </section>
+
+            {(teamsError || matchesError) ? (
+                <div className="flex items-start gap-3 rounded-3xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-200">
+                    <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                    <span>{teamsError || matchesError}</span>
+                </div>
+            ) : null}
+
+            <div className="flex justify-center">
+                <div className="inline-flex rounded-2xl border border-white/10 bg-black/20 p-1 shadow-lg">
+                    <button
+                        onClick={() => setViewMode('general')}
+                        className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition ${viewMode === 'general' ? 'bg-primary text-black' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <Activity size={16} />
+                        Generelt
+                    </button>
+                    <button
+                        onClick={() => setViewMode('goalkeeper')}
+                        className={`flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition ${viewMode === 'goalkeeper' ? 'bg-blue-500 text-white' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <Shield size={16} />
+                        Målvakt
+                    </button>
+                </div>
             </div>
 
             {viewMode === 'general' ? (
                 <>
-                    {/* Quick Menu / Dashboard */}
                     {latestStats ? (
                         <>
-                            <div className="mb-12">
-                                <h2 className="text-xl font-bold mb-4 text-gray-300 uppercase tracking-widest">Siste Kamp Form ({latestMatch?.name})</h2>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    <div className="bg-card border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
-                                        <div className="absolute inset-0 bg-green-500/5 group-hover:bg-green-500/10 transition-colors" />
-                                        <div className="relative z-10 flex flex-col items-center">
-                                            <span className="text-sm text-gray-400 mb-1">Mål</span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-4xl font-black text-white">{latestStats.goal || 0}</span>
-                                                {renderTrend(latestStats.goal || 0, previousAvg?.goal, false)}
-                                            </div>
-                                            {previousAvg && <span className="text-xs text-gray-500 mt-2">Snitt før: {previousAvg.goal.toFixed(1)}</span>}
-                                        </div>
+                            <section className="space-y-5">
+                                <div className="flex items-end justify-between gap-4">
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-secondary/80">
+                                            Siste kamp
+                                        </p>
+                                        <h2 className="mt-2 text-3xl font-black text-white">
+                                            {latestMatch?.name || 'Siste registrerte kamp'}
+                                        </h2>
                                     </div>
+                                    <p className="text-sm text-gray-400">
+                                        {latestMatch ? `${formatDateLabel(latestMatch.date)} · ${latestMatch.periodLabel} · ${formatMatchTimeLabel(latestMatch.matchTime)}` : ''}
+                                    </p>
+                                </div>
 
-                                    <div className="bg-card border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
-                                        <div className="absolute inset-0 bg-red-500/5 group-hover:bg-red-500/10 transition-colors" />
-                                        <div className="relative z-10 flex flex-col items-center">
-                                            <span className="text-sm text-gray-400 mb-1">Skuddbom</span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-4xl font-black text-white">{latestStats.miss || 0}</span>
-                                                {renderTrend(latestStats.miss || 0, previousAvg?.miss, true)}
-                                            </div>
-                                            {previousAvg && <span className="text-xs text-gray-500 mt-2">Snitt før: {previousAvg.miss.toFixed(1)}</span>}
-                                        </div>
+                                <div className="grid gap-5 md:grid-cols-3">
+                                    <TrendCard
+                                        label="Mål"
+                                        value={latestStats.goal || 0}
+                                        helper={
+                                            previousAvg
+                                                ? `Snitt tidligere: ${previousAvg.goal.toFixed(1)}`
+                                                : 'Ingen tidligere snitt å sammenligne med ennå.'
+                                        }
+                                        trendIcon={renderTrend(latestStats.goal || 0, previousAvg?.goal, false)}
+                                        accentClassName="bg-green-500"
+                                    />
+                                    <TrendCard
+                                        label="Skuddbom"
+                                        value={latestStats.miss || 0}
+                                        helper={
+                                            previousAvg
+                                                ? `Snitt tidligere: ${previousAvg.miss.toFixed(1)}`
+                                                : 'Ingen tidligere snitt å sammenligne med ennå.'
+                                        }
+                                        trendIcon={renderTrend(latestStats.miss || 0, previousAvg?.miss, true)}
+                                        accentClassName="bg-red-500"
+                                    />
+                                    <TrendCard
+                                        label="Tekniske feil"
+                                        value={latestStats.tech || 0}
+                                        helper={
+                                            seasonAvg
+                                                ? `Sesongsnitt: ${seasonAvg.tech.toFixed(1)}`
+                                                : 'Ingen sesongsnitt å vise ennå.'
+                                        }
+                                        trendIcon={renderTrend(latestStats.tech || 0, seasonAvg?.tech, true)}
+                                        accentClassName="bg-yellow-500"
+                                    />
+                                </div>
+
+                                <div className="grid gap-4 md:grid-cols-3">
+                                    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">Resultat</p>
+                                        <p className="mt-3 text-3xl font-black text-white">{latestMatch?.homeScore || 0} - {latestMatch?.awayScore || 0}</p>
                                     </div>
-
-                                    <div className="bg-card border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
-                                        <div className="absolute inset-0 bg-yellow-500/5 group-hover:bg-yellow-500/10 transition-colors" />
-                                        <div className="relative z-10 flex flex-col items-center">
-                                            <span className="text-sm text-gray-400 mb-1">Tekniske Feil</span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-4xl font-black text-white">{latestStats.tech || 0}</span>
-                                                {renderTrend(latestStats.tech || 0, seasonAvg?.tech, true)}
-                                            </div>
-                                            {seasonAvg && <span className="text-xs text-gray-500 mt-2">Sesongsnitt: {seasonAvg.tech.toFixed(1)}</span>}
-                                        </div>
+                                    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">Registreringer</p>
+                                        <p className="mt-3 text-3xl font-black text-white">{latestMatch?.historyCount || 0}</p>
+                                    </div>
+                                    <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
+                                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">Kampklokke</p>
+                                        <p className="mt-3 text-3xl font-black text-white">{latestMatch ? formatMatchTimeLabel(latestMatch.matchTime) : '00:00'}</p>
                                     </div>
                                 </div>
-                            </div>
+                            </section>
 
-                            {/* Trend Analysis */}
-                            {trendData.length > 1 && (
-                                <div className="mb-12">
-                                    <h2 className="text-xl font-bold mb-4 text-gray-300 uppercase tracking-widest">Trend: Uttellingsprosent (Siste 5 kamper)</h2>
-                                    <div className="bg-card border border-white/5 p-6 rounded-2xl relative overflow-hidden">
-                                        <div className="h-40 flex items-end gap-4 mt-6">
-                                            {trendData.map((data, i) => (
-                                                <div key={i} className="flex-1 flex flex-col items-center justify-end h-full relative group">
-                                                    <span className="text-xs font-bold text-white opacity-0 group-hover:opacity-100 transition-opacity absolute -top-6 whitespace-nowrap z-20">
-                                                        {data.percentage}%
-                                                    </span>
-                                                    <div
-                                                        className="w-full bg-primary/60 group-hover:bg-primary transition-colors rounded-t-sm z-10"
-                                                        style={{ height: `${data.percentage}%`, minHeight: '4px' }}
-                                                    />
-                                                    <span className="text-[10px] text-gray-500 truncate w-full text-center mt-2 px-1" title={data.matchName}>
-                                                        {data.matchName.substring(0, 8)}{data.matchName.length > 8 ? '...' : ''}
-                                                    </span>
-                                                </div>
-                                            ))}
+                            {trendData.length > 1 ? (
+                                <section className="rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-xl md:p-8">
+                                    <div className="flex items-center gap-3">
+                                        <Target className="text-primary" size={20} />
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-white">
+                                                Uttellingsprosent, siste fem kamper
+                                            </h2>
+                                            <p className="mt-1 text-sm text-gray-400">
+                                                En enkel trendvisning som gjør det lettere å fange utvikling raskt.
+                                            </p>
                                         </div>
                                     </div>
-                                </div>
-                            )}
+
+                                    <div className="mt-8 flex h-48 items-end gap-4">
+                                        {trendData.map((item) => (
+                                            <div key={item.id} className="group flex h-full flex-1 flex-col items-center justify-end">
+                                                <span className="mb-3 text-xs font-bold text-white opacity-0 transition group-hover:opacity-100">
+                                                    {item.percentage}%
+                                                </span>
+                                                <div
+                                                    className="w-full rounded-t-lg bg-primary/70 transition group-hover:bg-primary"
+                                                    style={{ height: `${Math.max(item.percentage, 4)}%` }}
+                                                />
+                                                <span
+                                                    className="mt-3 w-full truncate text-center text-xs text-gray-500"
+                                                    title={item.matchName}
+                                                >
+                                                    {item.matchName}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            ) : null}
                         </>
                     ) : (
-                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl mb-12 text-center text-gray-400">
-                            Ingen kampdata registrert enda for dette laget. Gå til Statestikk for å registrere en kamp.
-                        </div>
+                        <EmptyState
+                            icon={ClipboardList}
+                            title="Ingen kampdata ennå"
+                            description="Når du har lagret en kamp for dette laget, vises siste kamp, trender og historikk her."
+                            action={
+                                <Link
+                                    to="/stats"
+                                    className="rounded-full bg-primary px-5 py-3 text-sm font-bold text-black transition hover:bg-white"
+                                >
+                                    Start første kamp
+                                </Link>
+                            }
+                        />
                     )}
                 </>
             ) : (
-                <div className="mb-12">
-                    <h2 className="text-xl font-bold mb-4 text-blue-400 uppercase tracking-widest flex items-center gap-2">
-                        <Shield size={24} /> Målvaktsanalyse (Sesong)
-                    </h2>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="bg-card border border-white/5 p-6 rounded-2xl">
-                            <h3 className="text-center font-bold mb-6 text-gray-300">Heatmap (Svarsprosent i Mål)</h3>
-                            <GoalVisualizer
-                                saves={[]}
-                                teamName={team.name}
-                                type="heatmap"
-                                heatmapData={heatmapData}
-                                title=""
-                            />
-                            <p className="text-xs text-center text-gray-500 mt-4">Prosentandelen viser redninger per totale skudd i hver sone.</p>
-                        </div>
-
-                        <div className="bg-card border border-white/5 p-6 rounded-2xl flex flex-col">
-                            <h3 className="text-center font-bold mb-6 text-gray-300">Redningsprosent per Skuddposisjon</h3>
-
-                            <div className="flex-1 flex flex-col justify-center gap-4">
-                                {courtZoneStats.map(zone => {
-                                    const percentage = zone.data.total > 0 ? Math.round((zone.data.saves / zone.data.total) * 100) : 0;
-                                    return (
-                                        <div key={zone.name} className="flex flex-col gap-2">
-                                            <div className="flex justify-between items-end">
-                                                <span className="font-bold">{zone.name}</span>
-                                                <span className="text-2xl font-black">{percentage}%</span>
-                                            </div>
-                                            <div className="h-3 bg-white/10 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-blue-500 rounded-full"
-                                                    style={{ width: `${percentage}%` }}
-                                                />
-                                            </div>
-                                            <span className="text-xs text-gray-500 text-right">{zone.data.saves} redninger / {zone.data.total} skudd</span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
+                <section className="rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-xl md:p-8">
+                    <div className="mb-6 flex items-center gap-3">
+                        <Shield className="text-blue-400" size={22} />
+                        <div>
+                            <h2 className="text-2xl font-bold text-white">Målvaktsanalyse</h2>
+                            <p className="mt-1 text-sm text-gray-400">
+                                Sesongbildet viser redningsprosent per sone når det finnes registrerte skudddata.
+                            </p>
                         </div>
                     </div>
-                </div>
-            )}
 
-            {/* Match History */}
-            <div>
-                <h2 className="text-xl font-bold mb-4 text-gray-300 uppercase tracking-widest">Tidligere Kamper</h2>
-                <div className="space-y-4">
-                    {matches.map(match => (
-                        <div key={match.id} className="bg-card border border-white/5 p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
-                            <div className="text-center md:text-left">
-                                <h3 className="font-bold text-lg">{match.name}</h3>
-                                <p className="text-xs text-gray-500">
-                                    {match.date ? new Date(match.date?.seconds * 1000).toLocaleDateString() : 'Ukjent dato'} • {match.homeTeam} vs {match.awayTeam}
+                    {hasGoalkeeperData ? (
+                        <div className="grid gap-6 lg:grid-cols-2">
+                            <div className="rounded-3xl border border-white/10 bg-card/70 p-6">
+                                <h3 className="text-center font-bold text-gray-300">Heatmap i mål</h3>
+                                <div className="mt-6">
+                                    <GoalVisualizer
+                                        saves={[]}
+                                        teamName={team.name}
+                                        type="heatmap"
+                                        heatmapData={heatmapData}
+                                        title=""
+                                    />
+                                </div>
+                                <p className="mt-4 text-center text-xs text-gray-500">
+                                    Prosenten viser redninger i sonen sett opp mot totale skudd i samme område.
                                 </p>
                             </div>
-                            <div className="text-2xl font-black tracking-widest bg-black px-4 py-2 rounded-lg border border-white/10">
-                                {match.homeScore} - {match.awayScore}
+
+                            <div className="rounded-3xl border border-white/10 bg-card/70 p-6">
+                                <h3 className="font-bold text-gray-300">Redningsprosent per skuddposisjon</h3>
+                                <div className="mt-6 space-y-5">
+                                    {courtZoneStats.map((zone) => {
+                                        const percentage =
+                                            zone.data.total > 0
+                                                ? Math.round((zone.data.saves / zone.data.total) * 100)
+                                                : 0;
+
+                                        return (
+                                            <div key={zone.name}>
+                                                <div className="flex items-end justify-between gap-3">
+                                                    <span className="font-bold text-white">{zone.name}</span>
+                                                    <span className="text-2xl font-black text-white">{percentage}%</span>
+                                                </div>
+                                                <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10">
+                                                    <div
+                                                        className="h-full rounded-full bg-blue-500"
+                                                        style={{ width: `${percentage}%` }}
+                                                    />
+                                                </div>
+                                                <p className="mt-2 text-right text-xs text-gray-500">
+                                                    {zone.data.saves} redninger av {zone.data.total} skudd
+                                                </p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         </div>
-                    ))}
-                    {matches.length === 0 && (
-                        <p className="text-gray-500">Ingen kamper spilt enda.</p>
+                    ) : (
+                        <EmptyState
+                            icon={Shield}
+                            title="Ingen målvaktsdata ennå"
+                            description="Denne visningen blir nyttig når kampene inneholder registrerte skuddplasseringer og resultater mot mål."
+                            action={
+                                <Link
+                                    to="/stats"
+                                    className="rounded-full bg-blue-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-400"
+                                >
+                                    Registrer kamp med skudddata
+                                </Link>
+                            }
+                        />
                     )}
+                </section>
+            )}
+
+            <section className="rounded-[2rem] border border-white/10 bg-black/20 p-6 shadow-xl md:p-8">
+                <div className="mb-6 flex items-center gap-3">
+                    <ClipboardList className="text-primary" size={20} />
+                    <div>
+                        <h2 className="text-2xl font-bold text-white">Tidligere kamper</h2>
+                        <p className="mt-1 text-sm text-gray-400">
+                            Alle lagrede kamper for {team.name} vises her.
+                        </p>
+                    </div>
                 </div>
-            </div>
+
+                {matches.length === 0 ? (
+                    <EmptyState
+                        icon={ClipboardList}
+                        title="Ingen kamper lagret ennå"
+                        description="Når du lagrer første kamp for dette laget, dukker historikken opp her med resultat og dato."
+                    />
+                ) : (
+                    <div className="space-y-4">
+                        {matches.map((match) => (
+                            <article
+                                key={match.id}
+                                className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-card/70 p-5 md:flex-row md:items-center md:justify-between"
+                            >
+                                <div>
+                                    <h3 className="text-xl font-bold text-white">{match.name}</h3>
+                                    <p className="mt-2 text-sm text-gray-400">
+                                        {formatDateLabel(match.date)} · {match.homeTeam} vs {match.awayTeam}
+                                    </p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        {match.periodLabel} · {formatMatchTimeLabel(match.matchTime)} · {match.historyCount} registreringer
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl border border-white/10 bg-black/40 px-5 py-3 text-2xl font-black tracking-widest text-white">
+                                    {match.homeScore} - {match.awayScore}
+                                </div>
+                            </article>
+                        ))}
+                    </div>
+                )}
+            </section>
         </div>
     );
 }
-

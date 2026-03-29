@@ -1,7 +1,8 @@
 {
-  "name": "temp-app",
+  "name": "handball-hjelpen",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Live kampstatistikk for håndballtrenere bygget med React, Vite og Firebase.",
   "type": "module",
   "scripts": {
     "dev": "vite",

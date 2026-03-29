@@ -1,14 +1,8 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
-
-interface AuthContextType {
-    currentUser: User | null;
-    loading: boolean;
-    logout: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+import { LoadingState } from '../ui/LoadingState';
+import { AuthContext } from './auth-context';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -29,15 +23,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return (
         <AuthContext.Provider value={{ currentUser, loading, logout }}>
-            {!loading && children}
+            {loading ? (
+                <LoadingState
+                    fullScreen
+                    title="Kobler til kontoen"
+                    message="Vi sjekker innloggingen din og gjør appen klar."
+                />
+            ) : children}
         </AuthContext.Provider>
     );
-}
-
-export function useAuth() {
-    const context = useContext(AuthContext);
-    if (context === undefined) {
-        throw new Error('useAuth must be used within an AuthProvider');
-    }
-    return context;
 }

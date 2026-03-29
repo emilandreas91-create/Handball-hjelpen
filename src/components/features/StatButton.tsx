@@ -1,5 +1,5 @@
 import { clsx } from 'clsx';
-import { StatType } from '../../hooks/useMatch';
+import type { StatType } from '../../lib/matchData';
 
 interface StatButtonProps {
     type: StatType;
@@ -7,24 +7,29 @@ interface StatButtonProps {
     count: number;
     onClick: () => void;
     color: string;
+    disabled?: boolean;
 }
 
-export function StatButton({ label, count, onClick, color }: StatButtonProps) {
+export function StatButton({ label, count, onClick, color, disabled = false }: StatButtonProps) {
     return (
         <button
+            type="button"
             onClick={onClick}
+            disabled={disabled}
+            aria-label={`${label}: ${count}`}
             className={clsx(
-                "relative flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-transparent transition-all active:scale-95 hover:brightness-110 shadow-lg overflow-hidden group",
+                "group relative flex min-h-[112px] flex-col items-center justify-center overflow-hidden rounded-2xl border-2 border-transparent px-4 py-5 text-center shadow-lg transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-[132px] sm:px-6 sm:py-6 touch-manipulation",
+                !disabled && "hover:brightness-110",
                 color // Expecting tailwind bg class like 'bg-green-600'
             )}
         >
-            <span className="text-xl font-bold text-white uppercase tracking-wider relative z-10">{label}</span>
-            <div className="mt-2 bg-black/40 px-4 py-1 rounded-lg relative z-10">
-                <span className="text-3xl font-black text-white">{count}</span>
+            <span className="relative z-10 text-base font-bold uppercase tracking-wide text-white sm:text-xl">{label}</span>
+            <div className="relative z-10 mt-3 rounded-lg bg-black/40 px-4 py-1.5 sm:px-5">
+                <span className="text-3xl font-black text-white sm:text-4xl">{count}</span>
             </div>
 
             {/* Background decoration */}
-            <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
         </button>
     );
 }

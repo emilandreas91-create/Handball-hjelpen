@@ -1,6 +1,5 @@
 import React from 'react';
-
-import { SaveLocation } from '../../hooks/useMatch';
+import type { SaveLocation } from '../../lib/matchData';
 
 interface GoalVisualizerProps {
     saves: SaveLocation[];
@@ -12,8 +11,15 @@ interface GoalVisualizerProps {
 }
 
 export function GoalVisualizer({ saves, onAddSave, teamName, type = 'save', title = 'Redninger', heatmapData }: GoalVisualizerProps) {
-    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        if (!onAddSave || type === 'heatmap') return;
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!onAddSave || type === 'heatmap') {
+            return;
+        }
+
+        if (e.pointerType === 'mouse' && e.button !== 0) {
+            return;
+        }
+
         const rect = e.currentTarget.getBoundingClientRect();
         const x = ((e.clientX - rect.left) / rect.width) * 100;
         const y = ((e.clientY - rect.top) / rect.height) * 100;
@@ -21,68 +27,77 @@ export function GoalVisualizer({ saves, onAddSave, teamName, type = 'save', titl
     };
 
     const getHeatmapColor = (percentage: number) => {
-        if (percentage < 30) return 'rgba(255, 0, 0, 0.5)'; // Low save % = red
-        if (percentage > 50) return 'rgba(0, 255, 0, 0.5)'; // High save % = green
-        return 'rgba(255, 165, 0, 0.4)'; // Mid save % = orange
+        if (percentage < 30) return 'rgba(255, 0, 0, 0.5)';
+        if (percentage > 50) return 'rgba(0, 255, 0, 0.5)';
+        return 'rgba(255, 165, 0, 0.4)';
     };
 
+    const instructions = type === 'save' ? 'Trykk i målet for å registrere redning.' : 'Trykk i målet for å plassere skuddet.';
+    const isInteractive = Boolean(onAddSave) && type !== 'heatmap';
+
     return (
-        <div className="flex flex-col items-center w-full">
-            <h3 className="text-white/70 mb-2 text-sm font-bold uppercase tracking-wider">{title} - {teamName}</h3>
+        <div className="flex w-full flex-col items-center">
+            <h3 className="mb-2 text-center text-sm font-bold uppercase tracking-wider text-white/70 sm:text-base">
+                {title} - {teamName}
+            </h3>
             <div
-                className={`relative w-full aspect-[3/2] bg-black/20 border-4 rounded-lg overflow-hidden shadow-inner ${type === 'save' ? 'border-red-600' : type === 'heatmap' ? 'border-blue-500' : 'border-green-600'} ${onAddSave && type !== 'heatmap' ? 'cursor-crosshair' : 'cursor-default'}`}
-                onClick={handleClick}
+                className={`relative w-full aspect-[3/2] overflow-hidden rounded-xl border-4 bg-black/20 shadow-inner ${type === 'save' ? 'border-red-600' : type === 'heatmap' ? 'border-blue-500' : 'border-green-600'} ${isInteractive ? 'cursor-crosshair touch-manipulation' : 'cursor-default'}`}
+                onPointerDown={handlePointerDown}
+                aria-label={`${title} for ${teamName}${isInteractive ? `. ${instructions}` : ''}`}
+                style={{ touchAction: isInteractive ? 'manipulation' : undefined }}
             >
-                {/* Goal Frame/Net Visualization */}
-                <div className="absolute inset-0 opacity-20 pointer-events-none"
+                <div
+                    className="pointer-events-none absolute inset-0 opacity-20"
                     style={{
                         backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)',
                         backgroundSize: '10px 10px'
                     }}
                 />
 
-                {/* Goal Posts (Visual Only) */}
-                <div className="absolute top-0 bottom-0 left-0 w-2 bg-white/50 z-20" />
-                <div className="absolute top-0 bottom-0 right-0 w-2 bg-white/50 z-20" />
-                <div className="absolute top-0 left-0 right-0 h-2 bg-white/50 z-20" />
+                <div className="absolute bottom-0 left-0 top-0 z-20 w-2 bg-white/50" />
+                <div className="absolute bottom-0 right-0 top-0 z-20 w-2 bg-white/50" />
+                <div className="absolute left-0 right-0 top-0 z-20 h-2 bg-white/50" />
 
-                {/* Heatmap Grid Overlay */}
                 {type === 'heatmap' && heatmapData && (
-                    <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 z-10">
-                        {[0, 1, 2].map(row => (
-                            [0, 1, 2].map(col => {
-                                const data = heatmapData.find(d => d.zoneX === col && d.zoneY === row);
+                    <div className="absolute inset-0 z-10 grid grid-cols-3 grid-rows-3">
+                        {[0, 1, 2].map((row) => (
+                            [0, 1, 2].map((col) => {
+                                const data = heatmapData.find((entry) => entry.zoneX === col && entry.zoneY === row);
                                 const percentage = data ? data.savePercentage : 0;
+
                                 return (
                                     <div
                                         key={`${col}-${row}`}
-                                        className="border border-white/10 flex flex-col justify-center items-center transition-opacity"
+                                        className="flex items-center justify-center border border-white/10 transition-opacity"
                                         style={{ backgroundColor: data ? getHeatmapColor(percentage) : 'transparent' }}
                                     >
                                         {data && percentage > 0 && (
-                                            <span className="text-white font-bold text-sm drop-shadow-md">
+                                            <span className="text-sm font-bold text-white drop-shadow-md">
                                                 {percentage}%
                                             </span>
                                         )}
                                     </div>
-                                )
+                                );
                             })
                         ))}
                     </div>
                 )}
 
-                {/* Saves / Goals */}
-                {type !== 'heatmap' && saves.map(save => (
+                {type !== 'heatmap' && saves.map((save) => (
                     <div
                         key={save.id}
-                        className={`absolute w-6 h-6 -ml-3 -mt-3 rounded-full border-2 border-black flex items-center justify-center text-xs font-bold text-black shadow-lg animate-in zoom-in duration-200 z-30 ${type === 'save' ? 'bg-yellow-400' : 'bg-green-400'}`}
+                        className={`absolute z-30 flex h-7 w-7 -ml-3.5 -mt-3.5 items-center justify-center rounded-full border-2 border-black text-[11px] font-bold text-black shadow-lg duration-200 animate-in zoom-in sm:h-8 sm:w-8 sm:-ml-4 sm:-mt-4 sm:text-xs ${type === 'save' ? 'bg-yellow-400' : 'bg-green-400'}`}
                         style={{ left: `${save.x}%`, top: `${save.y}%` }}
                     >
                         {save.count > 1 ? save.count : ''}
                     </div>
                 ))}
             </div>
-            {onAddSave && type !== 'heatmap' && <p className="text-white/40 text-xs mt-2 text-center">Trykk i målet for å registrere {type === 'save' ? 'redning' : 'mål'}</p>}
+            {isInteractive && (
+                <p className="mt-2 px-2 text-center text-xs text-white/50 sm:text-sm">
+                    {instructions}
+                </p>
+            )}
         </div>
     );
 }

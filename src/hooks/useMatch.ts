@@ -1,39 +1,18 @@
-import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
-
-export type TeamSide = 'home' | 'away';
-export type StatType = 'goal' | 'miss' | 'save' | 'tech' | 'other';
-
-export interface MatchStats {
-    goal: number;
-    miss: number;
-    save: number;
-    tech: number;
-    [key: string]: number; // Allow custom stats
-}
-
-export interface SaveLocation {
-    id: string;
-    x: number;
-    y: number;
-    count: number;
-}
-
-export interface TeamState {
-    score: number;
-    stats: MatchStats;
-    saves: SaveLocation[];
-    goalLocations: SaveLocation[];
-    shotLocations: SaveLocation[];
-}
-
-
-export interface MatchData {
-    matchTime: number;
-    period: number;
-    homeState: TeamState;
-    awayState: TeamState;
-    history: { side: TeamSide, type: StatType | string, data?: any }[];
-}
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+    addOrIncrementLocation,
+    createEmptyTeamState,
+    getPeriodLabel,
+    normalizeHistory,
+    normalizeTeamState,
+    removeOrDecrementLocation,
+    type MatchData,
+    type MatchEvent,
+    type ShotResult,
+    type StatType,
+    type TeamSide,
+    type TeamState,
+} from '../lib/matchData';
 
 interface MatchContextType {
     matchTime: number;
@@ -49,240 +28,333 @@ interface MatchContextType {
     addSave: (side: TeamSide, x: number, y: number) => void;
     addGoalLocation: (side: TeamSide, x: number, y: number) => void;
     addShotLocation: (side: TeamSide, x: number, y: number) => void;
-    addCombinedShot: (side: TeamSide, courtX: number, courtY: number, goalX: number, goalY: number, result: 'goal' | 'save' | 'miss') => void;
+    addCombinedShot: (side: TeamSide, courtX: number, courtY: number, goalX: number, goalY: number, result: ShotResult) => void;
     undoLastStat: () => void;
     canUndo: boolean;
     nextPeriod: () => void;
+    resetMatch: () => void;
     loadMatch: (data: MatchData) => void;
-    history: { side: TeamSide, type: StatType | string, data?: any }[];
+    draftRecovered: boolean;
+    lastDraftSavedAt: number | null;
+    history: MatchEvent[];
 }
 
 const MatchContext = createContext<MatchContextType | undefined>(undefined);
+const LIVE_MATCH_STORAGE_KEY = 'handball-help-live-match:v1';
 
 export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [matchTime, setMatchTime] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const [period, setPeriod] = useState(1);
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const [homeState, setHomeState] = useState<TeamState>({ score: 0, stats: { goal: 0, miss: 0, save: 0, tech: 0, other: 0 }, saves: [], goalLocations: [], shotLocations: [] });
-    const [awayState, setAwayState] = useState<TeamState>({ score: 0, stats: { goal: 0, miss: 0, save: 0, tech: 0, other: 0 }, saves: [], goalLocations: [], shotLocations: [] });
-    const [history, setHistory] = useState<{ side: TeamSide, type: StatType | string, data?: any }[]>([]);
+    const [homeState, setHomeState] = useState<TeamState>(createEmptyTeamState());
+    const [awayState, setAwayState] = useState<TeamState>(createEmptyTeamState());
+    const [history, setHistory] = useState<MatchEvent[]>([]);
+    const [draftRecovered, setDraftRecovered] = useState(false);
+    const [lastDraftSavedAt, setLastDraftSavedAt] = useState<number | null>(null);
+    const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
 
-    // Timer Logic
+    const appendHistory = (
+        side: TeamSide,
+        type: StatType | string,
+        data?: Record<string, number | string | boolean | null | undefined>,
+    ) => {
+        setHistory((prev) => [
+            ...prev,
+            {
+                side,
+                type,
+                period,
+                matchTime,
+                createdAt: new Date().toISOString(),
+                data,
+            },
+        ]);
+    };
+
     useEffect(() => {
         if (isRunning) {
             timerRef.current = setInterval(() => {
-                setMatchTime(prev => prev + 1);
+                setMatchTime((prev) => prev + 1);
             }, 1000);
         } else if (timerRef.current) {
             clearInterval(timerRef.current);
+            timerRef.current = null;
         }
+
         return () => {
-            if (timerRef.current) clearInterval(timerRef.current);
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+            }
         };
     }, [isRunning]);
 
-    const toggleTimer = () => setIsRunning(!isRunning);
-    const resetTimer = () => { setIsRunning(false); setMatchTime(0); };
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            setHasHydratedDraft(true);
+            return;
+        }
+
+        try {
+            const rawDraft = window.localStorage.getItem(LIVE_MATCH_STORAGE_KEY);
+            if (!rawDraft) {
+                return;
+            }
+
+            const parsedDraft = JSON.parse(rawDraft) as MatchData & { updatedAt?: number };
+
+            setMatchTime(Math.max(0, Math.round(parsedDraft.matchTime || 0)));
+            setPeriod(Math.max(1, Math.round(parsedDraft.period || 1)));
+            setHomeState(normalizeTeamState(parsedDraft.homeState, parsedDraft.homeState?.score));
+            setAwayState(normalizeTeamState(parsedDraft.awayState, parsedDraft.awayState?.score));
+            setHistory(normalizeHistory(parsedDraft.history));
+            setDraftRecovered(true);
+            setLastDraftSavedAt(typeof parsedDraft.updatedAt === 'number' ? parsedDraft.updatedAt : null);
+        } catch (draftError) {
+            console.error('Kunne ikke gjenopprette lokal kampkladd.', draftError);
+            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
+        } finally {
+            setHasHydratedDraft(true);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!hasHydratedDraft || typeof window === 'undefined') {
+            return;
+        }
+
+        const hasDraftContent = (
+            matchTime > 0 ||
+            period !== 1 ||
+            history.length > 0 ||
+            homeState.score > 0 ||
+            awayState.score > 0 ||
+            homeState.shotLocations.length > 0 ||
+            awayState.shotLocations.length > 0
+        );
+
+        if (!hasDraftContent) {
+            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
+            setLastDraftSavedAt(null);
+            return;
+        }
+
+        const updatedAt = Date.now();
+        window.localStorage.setItem(LIVE_MATCH_STORAGE_KEY, JSON.stringify({
+            matchTime,
+            period,
+            homeState,
+            awayState,
+            history,
+            updatedAt,
+        }));
+        setLastDraftSavedAt(updatedAt);
+    }, [awayState, hasHydratedDraft, history, homeState, matchTime, period]);
+
+    const toggleTimer = () => setIsRunning((current) => !current);
+
+    const resetTimer = () => {
+        setIsRunning(false);
+        setMatchTime(0);
+    };
 
     const formatTime = (seconds: number) => {
-        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const s = (seconds % 60).toString().padStart(2, '0');
-        return `${m}:${s}`;
+        const safeSeconds = Math.max(0, Math.round(seconds));
+        const minutes = Math.floor(safeSeconds / 60).toString().padStart(2, '0');
+        const remainingSeconds = (safeSeconds % 60).toString().padStart(2, '0');
+        return `${minutes}:${remainingSeconds}`;
     };
 
     const updateStat = (side: TeamSide, type: StatType | string) => {
         const setState = side === 'home' ? setHomeState : setAwayState;
-        setState(prev => {
-            const newStats = { ...prev.stats, [type]: (prev.stats[type] || 0) + 1 };
-            let newScore = prev.score;
-            if (type === 'goal') newScore += 1;
-            return { ...prev, score: newScore, stats: newStats };
+
+        setState((prev) => {
+            const nextStats = { ...prev.stats, [type]: (prev.stats[type] || 0) + 1 };
+            const nextScore = type === 'goal' ? prev.score + 1 : prev.score;
+
+            return { ...prev, score: nextScore, stats: nextStats };
         });
-        setHistory(prev => [...prev, { side, type }]);
+
+        appendHistory(side, type);
     };
 
     const addSave = (side: TeamSide, x: number, y: number) => {
         const setState = side === 'home' ? setHomeState : setAwayState;
-        setState(prev => {
-            const newStats = { ...prev.stats, save: prev.stats.save + 1 };
-            const newSaves = _addLocation(prev.saves, x, y);
-            return { ...prev, stats: newStats, saves: newSaves };
-        });
-        setHistory(prev => [...prev, { side, type: 'save', data: { x, y } }]);
+
+        setState((prev) => ({
+            ...prev,
+            stats: { ...prev.stats, save: prev.stats.save + 1 },
+            saves: addOrIncrementLocation(prev.saves, x, y),
+        }));
+
+        appendHistory(side, 'save', { x, y });
     };
 
     const addGoalLocation = (side: TeamSide, x: number, y: number) => {
         const setState = side === 'home' ? setHomeState : setAwayState;
-        setState(prev => {
-            const newStats = { ...prev.stats, goal: prev.stats.goal + 1 };
-            const newGoalLocations = _addLocation(prev.goalLocations, x, y);
-            return { ...prev, score: prev.score + 1, stats: newStats, goalLocations: newGoalLocations };
-        });
-        setHistory(prev => [...prev, { side, type: 'goalLocation', data: { x, y } }]);
+
+        setState((prev) => ({
+            ...prev,
+            score: prev.score + 1,
+            stats: { ...prev.stats, goal: prev.stats.goal + 1 },
+            goalLocations: addOrIncrementLocation(prev.goalLocations, x, y),
+        }));
+
+        appendHistory(side, 'goalLocation', { x, y });
     };
 
     const addShotLocation = (side: TeamSide, x: number, y: number) => {
         const setState = side === 'home' ? setHomeState : setAwayState;
-        setState(prev => {
-            const newShotLocations = _addLocation(prev.shotLocations, x, y);
-            return { ...prev, shotLocations: newShotLocations };
-        });
-        setHistory(prev => [...prev, { side, type: 'shotLocation', data: { x, y } }]);
+
+        setState((prev) => ({
+            ...prev,
+            shotLocations: addOrIncrementLocation(prev.shotLocations, x, y),
+        }));
+
+        appendHistory(side, 'shotLocation', { x, y });
     };
 
-    const addCombinedShot = (side: TeamSide, courtX: number, courtY: number, goalX: number, goalY: number, result: 'goal' | 'save' | 'miss') => {
+    const addCombinedShot = (
+        side: TeamSide,
+        courtX: number,
+        courtY: number,
+        goalX: number,
+        goalY: number,
+        result: ShotResult,
+    ) => {
         const setState = side === 'home' ? setHomeState : setAwayState;
 
-        setState(prev => {
-            const newStats = { ...prev.stats, [result]: prev.stats[result] + 1 };
-            let newScore = prev.score;
-            if (result === 'goal') newScore += 1;
-
-            const newShotLocations = _addLocation(prev.shotLocations, courtX, courtY);
-            let newGoalLocations = prev.goalLocations;
-            let newSaves = prev.saves;
-
-            if (result === 'goal') {
-                newGoalLocations = _addLocation(prev.goalLocations, goalX, goalY);
-            } else if (result === 'save') {
-                newSaves = _addLocation(prev.saves, goalX, goalY);
-            }
+        setState((prev) => {
+            const nextStats = { ...prev.stats, [result]: (prev.stats[result] || 0) + 1 };
+            const nextScore = result === 'goal' ? prev.score + 1 : prev.score;
 
             return {
                 ...prev,
-                score: newScore,
-                stats: newStats,
-                shotLocations: newShotLocations,
-                goalLocations: newGoalLocations,
-                saves: newSaves
+                score: nextScore,
+                stats: nextStats,
+                shotLocations: addOrIncrementLocation(prev.shotLocations, courtX, courtY),
+                goalLocations: result === 'goal'
+                    ? addOrIncrementLocation(prev.goalLocations, goalX, goalY)
+                    : prev.goalLocations,
+                saves: result === 'save'
+                    ? addOrIncrementLocation(prev.saves, goalX, goalY)
+                    : prev.saves,
             };
         });
 
-        setHistory(prev => [...prev, {
-            side,
-            type: 'combinedShot',
-            data: { courtX, courtY, goalX, goalY, result }
-        }]);
-    };
-
-    // Helper to add location with tolerance group
-    const _addLocation = (locations: SaveLocation[], x: number, y: number) => {
-        const tolerance = 5;
-        const existingIndex = locations.findIndex(s =>
-            Math.abs(s.x - x) < tolerance && Math.abs(s.y - y) < tolerance
-        );
-
-        let newLocations = [...locations];
-        let saveId = `loc_${Date.now()}`;
-
-        if (existingIndex >= 0) {
-            const existing = newLocations[existingIndex];
-            newLocations[existingIndex] = { ...existing, count: existing.count + 1 };
-        } else {
-            newLocations.push({ id: saveId, x, y, count: 1 });
-        }
-        return newLocations;
+        appendHistory(side, 'combinedShot', { courtX, courtY, goalX, goalY, result });
     };
 
     const undoLastStat = () => {
-        setHistory(prev => {
-            if (prev.length === 0) return prev;
-            const newHistory = [...prev];
-            const lastAction = newHistory.pop();
+        setHistory((prevHistory) => {
+            if (prevHistory.length === 0) {
+                return prevHistory;
+            }
 
-            if (lastAction) {
-                const { side, type } = lastAction;
-                const setState = side === 'home' ? setHomeState : setAwayState;
-                setState(currentState => {
-                    let newScore = currentState.score;
-                    let newStats = { ...currentState.stats };
-                    let newSaves = currentState.saves;
-                    let newGoalLocations = currentState.goalLocations;
-                    let newShotLocations = currentState.shotLocations;
+            const nextHistory = [...prevHistory];
+            const lastAction = nextHistory.pop();
 
-                    if (type === 'combinedShot' && lastAction.data) {
-                        const { courtX, courtY, goalX, goalY, result } = lastAction.data;
-                        newStats[result] = Math.max(0, newStats[result] - 1);
-                        if (result === 'goal') newScore = Math.max(0, newScore - 1);
+            if (!lastAction) {
+                return prevHistory;
+            }
 
-                        newShotLocations = _removeLocation(currentState.shotLocations, courtX, courtY);
-                        if (result === 'goal') {
-                            newGoalLocations = _removeLocation(currentState.goalLocations, goalX, goalY);
-                        } else if (result === 'save') {
-                            newSaves = _removeLocation(currentState.saves, goalX, goalY);
-                        }
-                    } else {
-                        const currentCount = currentState.stats[type] || 0;
-                        newStats[type] = Math.max(0, currentCount - 1);
+            const setState = lastAction.side === 'home' ? setHomeState : setAwayState;
 
-                        if (type === 'goal' || type === 'goalLocation') newScore = Math.max(0, newScore - 1);
-                        if (type === 'goalLocation') newStats.goal = Math.max(0, currentState.stats.goal - 1);
+            setState((currentState) => {
+                const nextStats = { ...currentState.stats };
+                let nextScore = currentState.score;
+                let nextSaves = currentState.saves;
+                let nextGoalLocations = currentState.goalLocations;
+                let nextShotLocations = currentState.shotLocations;
 
-                        if ((type === 'save' || type === 'goalLocation' || type === 'shotLocation') && lastAction.data) {
-                            const { x, y } = lastAction.data;
+                if (lastAction.type === 'combinedShot' && lastAction.data) {
+                    const { courtX, courtY, goalX, goalY, result } = lastAction.data;
 
-                            if (type === 'save') newSaves = _removeLocation(currentState.saves, x, y);
-                            if (type === 'goalLocation') newGoalLocations = _removeLocation(currentState.goalLocations, x, y);
-                            if (type === 'shotLocation') newShotLocations = _removeLocation(currentState.shotLocations, x, y);
-                        }
+                    if (typeof result === 'string') {
+                        nextStats[result] = Math.max(0, (nextStats[result] || 0) - 1);
                     }
 
-                    return {
-                        score: newScore,
-                        stats: newStats,
-                        saves: newSaves,
-                        goalLocations: newGoalLocations,
-                        shotLocations: newShotLocations
-                    };
-                });
-            }
-            return newHistory;
+                    if (result === 'goal') {
+                        nextScore = Math.max(0, nextScore - 1);
+                    }
+
+                    nextShotLocations = removeOrDecrementLocation(currentState.shotLocations, Number(courtX), Number(courtY));
+
+                    if (result === 'goal') {
+                        nextGoalLocations = removeOrDecrementLocation(currentState.goalLocations, Number(goalX), Number(goalY));
+                    }
+
+                    if (result === 'save') {
+                        nextSaves = removeOrDecrementLocation(currentState.saves, Number(goalX), Number(goalY));
+                    }
+                } else {
+                    nextStats[lastAction.type] = Math.max(0, (currentState.stats[lastAction.type] || 0) - 1);
+
+                    if (lastAction.type === 'goal' || lastAction.type === 'goalLocation') {
+                        nextScore = Math.max(0, nextScore - 1);
+                    }
+
+                    if (lastAction.type === 'goalLocation') {
+                        nextStats.goal = Math.max(0, currentState.stats.goal - 1);
+                    }
+
+                    const x = typeof lastAction.data?.x === 'number' ? lastAction.data.x : Number(lastAction.data?.x);
+                    const y = typeof lastAction.data?.y === 'number' ? lastAction.data.y : Number(lastAction.data?.y);
+
+                    if (lastAction.type === 'save') {
+                        nextSaves = removeOrDecrementLocation(currentState.saves, x, y);
+                    }
+
+                    if (lastAction.type === 'goalLocation') {
+                        nextGoalLocations = removeOrDecrementLocation(currentState.goalLocations, x, y);
+                    }
+
+                    if (lastAction.type === 'shotLocation') {
+                        nextShotLocations = removeOrDecrementLocation(currentState.shotLocations, x, y);
+                    }
+                }
+
+                return {
+                    score: nextScore,
+                    stats: nextStats,
+                    saves: nextSaves,
+                    goalLocations: nextGoalLocations,
+                    shotLocations: nextShotLocations,
+                };
+            });
+
+            return nextHistory;
         });
     };
 
-    // Helper to remove location
-    const _removeLocation = (locations: SaveLocation[], x: number, y: number) => {
-        const tolerance = 5;
-        const existingIndex = locations.findIndex(s =>
-            Math.abs(s.x - x) < tolerance && Math.abs(s.y - y) < tolerance
-        );
-
-        if (existingIndex >= 0) {
-            const existing = locations[existingIndex];
-            const newLocations = [...locations];
-            if (existing.count > 1) {
-                newLocations[existingIndex] = { ...existing, count: existing.count - 1 };
-            } else {
-                newLocations.splice(existingIndex, 1);
-            }
-            return newLocations;
-        }
-        return locations;
-    };
-
     const nextPeriod = () => {
-        setPeriod(p => p < 4 ? p + 1 : 1);
+        setPeriod((current) => current < 4 ? current + 1 : 1);
         setIsRunning(false);
     };
 
-    const getPeriodLabel = (p: number) => {
-        switch (p) {
-            case 1: return '1. OMG';
-            case 2: return '2. OMG';
-            case 3: return 'PAUSE';
-            case 4: return 'SLUTT';
-            default: return '1. OMG';
+    const resetMatch = () => {
+        setIsRunning(false);
+        setMatchTime(0);
+        setPeriod(1);
+        setHomeState(createEmptyTeamState());
+        setAwayState(createEmptyTeamState());
+        setHistory([]);
+        setDraftRecovered(false);
+        setLastDraftSavedAt(null);
+
+        if (typeof window !== 'undefined') {
+            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
         }
     };
 
     const loadMatch = (data: MatchData) => {
-        setMatchTime(data.matchTime);
-        setPeriod(data.period);
-        setHomeState(data.homeState);
-        setAwayState(data.awayState);
-        setHistory(data.history);
+        setMatchTime(Math.max(0, Math.round(data.matchTime || 0)));
+        setPeriod(Math.max(1, Math.round(data.period || 1)));
+        setHomeState(normalizeTeamState(data.homeState, data.homeState?.score));
+        setAwayState(normalizeTeamState(data.awayState, data.awayState?.score));
+        setHistory(normalizeHistory(data.history));
         setIsRunning(false);
     };
 
@@ -304,8 +376,11 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         undoLastStat,
         canUndo: history.length > 0,
         nextPeriod,
+        resetMatch,
         loadMatch,
-        history
+        draftRecovered,
+        lastDraftSavedAt,
+        history,
     };
 
     return React.createElement(MatchContext.Provider, { value }, children);
@@ -313,8 +388,16 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
 
 export function useMatchContext() {
     const context = useContext(MatchContext);
+
     if (context === undefined) {
         throw new Error('useMatchContext must be used within a MatchProvider');
     }
+
     return context;
 }
+
+export type {
+    MatchEvent as MatchHistoryEntry,
+    MatchStats,
+    TeamSide,
+} from '../lib/matchData';

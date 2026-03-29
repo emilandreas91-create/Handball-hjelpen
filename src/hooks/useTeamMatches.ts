@@ -1,67 +1,74 @@
-import { useState, useEffect } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { useAuth } from '../components/features/useAuth';
 import { db } from '../lib/firebase';
-import { useAuth } from '../components/features/AuthProvider';
+import {
+    matchIncludesTeam,
+    normalizeStoredMatchDocument,
+    type MatchEvent,
+    type NormalizedMatchDocument,
+    type StoredTeamStats,
+    type TeamLookup,
+} from '../lib/matchData';
 
-export interface MatchStat {
-    goal?: number;
-    miss?: number;
-    tech?: number;
-    history?: { side: string, type: string, data?: any }[];
-    [key: string]: any;
-}
+interface TeamFilter extends TeamLookup {}
 
-export interface Match {
-    id: string;
-    name: string;
-    date: any;
-    homeTeam: string;
-    awayTeam: string;
-    homeScore: number;
-    awayScore: number;
-    period: string;
+export interface Match extends NormalizedMatchDocument {
+    history: MatchEvent[];
     detailedStats: {
-        home: MatchStat;
-        away: MatchStat;
-    }
+        home: StoredTeamStats;
+        away: StoredTeamStats;
+    };
 }
 
-export function useTeamMatches(teamName?: string) {
+export function useTeamMatches(team?: TeamFilter) {
     const { currentUser } = useAuth();
     const [matches, setMatches] = useState<Match[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!currentUser || !teamName) {
+        const teamId = team?.id || null;
+        const teamName = team?.name?.trim() || null;
+        const teamAliases = team?.aliases ?? [];
+
+        if (!currentUser || (!teamId && !teamName && teamAliases.length === 0)) {
+            setMatches([]);
+            setError(null);
             setLoading(false);
             return;
         }
 
-        const q = query(
+        setLoading(true);
+        setError(null);
+
+        const unsubscribe = onSnapshot(
             collection(db, 'users', currentUser.uid, 'matches'),
-            orderBy('date', 'desc')
+            (snapshot) => {
+                const nextMatches = snapshot.docs
+                    .map((matchDoc) => normalizeStoredMatchDocument(matchDoc.id, matchDoc.data()))
+                    .filter((match) => matchIncludesTeam(match, { id: teamId, name: teamName, aliases: teamAliases }))
+                    .sort((a, b) => {
+                        if (b.sortDateMs !== a.sortDateMs) {
+                            return b.sortDateMs - a.sortDateMs;
+                        }
+
+                        return b.id.localeCompare(a.id);
+                    });
+
+                setMatches(nextMatches);
+                setError(null);
+                setLoading(false);
+            },
+            (snapshotError) => {
+                console.error(snapshotError);
+                setError('Kunne ikke laste kamper.');
+                setLoading(false);
+            },
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const matchesData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })) as Match[];
-
-            // Filter matches where this team played
-            const teamMatches = matchesData.filter(m => m.homeTeam === teamName || m.awayTeam === teamName);
-
-            setMatches(teamMatches);
-            setLoading(false);
-        }, (err) => {
-            console.error(err);
-            setError('Kunne ikke laste kamper.');
-            setLoading(false);
-        });
-
         return unsubscribe;
-    }, [currentUser, teamName]);
+    }, [currentUser, team?.aliases, team?.id, team?.name]);
 
     return { matches, loading, error };
 }

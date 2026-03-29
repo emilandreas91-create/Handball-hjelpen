@@ -1,18 +1,38 @@
+import { Suspense, lazy } from 'react';
 import { HashRouter, Route, Routes, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './components/features/AuthProvider';
+import { AuthProvider } from './components/features/AuthProvider';
+import { useAuth } from './components/features/useAuth';
 import { MatchProvider } from './hooks/useMatch';
 import { Layout } from './components/layout/Layout';
+import { LoadingState } from './components/ui/LoadingState';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
-import { Teams } from './pages/Teams';
-import { Stats } from './pages/Stats';
-import { TeamDetails } from './pages/TeamDetails';
+
+const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
+const Stats = lazy(() => import('./pages/Stats').then((module) => ({ default: module.Stats })));
+const TeamDetails = lazy(() => import('./pages/TeamDetails').then((module) => ({ default: module.TeamDetails })));
+
+function RouteFallback() {
+  return (
+    <LoadingState
+      title="Laster side"
+      message="Vi henter neste arbeidsflate og gjør innholdet klart."
+    />
+  );
+}
 
 // Protected Route Wrapper
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { currentUser, loading } = useAuth();
 
-  if (loading) return <div className="p-8 text-center text-primary">Laster...</div>;
+  if (loading) {
+    return (
+      <LoadingState
+        title="Henter arbeidsflate"
+        message="Vi klargjør live-visningen og lagdataene dine."
+      />
+    );
+  }
   if (!currentUser) return <Navigate to="/login" replace />;
 
   return children;
@@ -31,19 +51,26 @@ function App() {
             {/* Protected Routes Placeholders */}
             <Route path="/stats" element={
               <RequireAuth>
-                <Stats />
+                <Suspense fallback={<RouteFallback />}>
+                  <Stats />
+                </Suspense>
               </RequireAuth>
             } />
             <Route path="/teams" element={
               <RequireAuth>
-                <Teams />
+                <Suspense fallback={<RouteFallback />}>
+                  <Teams />
+                </Suspense>
               </RequireAuth>
             } />
             <Route path="/teams/:teamId" element={
               <RequireAuth>
-                <TeamDetails />
+                <Suspense fallback={<RouteFallback />}>
+                  <TeamDetails />
+                </Suspense>
               </RequireAuth>
             } />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
         </MatchProvider>
