@@ -11,6 +11,7 @@ import { Login } from './pages/Login';
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const Stats = lazy(() => import('./pages/Stats').then((module) => ({ default: module.Stats })));
 const TeamDetails = lazy(() => import('./pages/TeamDetails').then((module) => ({ default: module.TeamDetails })));
+const Start = lazy(() => import('./pages/Start').then((module) => ({ default: module.Start })));
 const Tactics = lazy(() => import('./pages/Tactics').then((module) => ({ default: module.Tactics })));
 const TacticPresentation = lazy(() => import('./pages/TacticPresentation').then((module) => ({ default: module.TacticPresentation })));
 
@@ -21,6 +22,25 @@ function RouteFallback() {
       message="Vi henter neste arbeidsflate og gjør innholdet klart."
     />
   );
+}
+
+function RootPage() {
+  const { currentUser, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <LoadingState
+        title="Henter arbeidsflate"
+        message="Vi gjør startsiden klar."
+      />
+    );
+  }
+
+  if (currentUser) {
+    return <Navigate to="/start" replace />;
+  }
+
+  return <Home />;
 }
 
 // Protected Route Wrapper
@@ -47,8 +67,15 @@ function App() {
         <MatchProvider>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<RootPage />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/start" element={
+              <RequireAuth>
+                <Suspense fallback={<RouteFallback />}>
+                  <Start />
+                </Suspense>
+              </RequireAuth>
+            } />
 
             {/* Protected Routes Placeholders */}
             <Route path="/stats" element={

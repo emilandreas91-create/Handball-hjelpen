@@ -26,7 +26,7 @@ export function Login() {
         try {
             setIsSubmitting(true);
             await signInWithEmailAndPassword(auth, email, password);
-            navigate('/stats');
+            navigate('/start');
         } catch (err) {
             setError('Kunne ikke logge inn. Sjekk brukernavn og passord.');
             console.error(err);
@@ -46,7 +46,7 @@ export function Login() {
         try {
             setIsGoogleSubmitting(true);
             await signInWithPopup(auth, googleProvider);
-            navigate('/stats');
+            navigate('/start');
         } catch (err) {
             setError('Kunne ikke logge inn med Google.');
             console.error(err);
