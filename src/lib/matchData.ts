@@ -23,7 +23,7 @@ export interface MatchEvent {
     period: number;
     matchTime: number;
     createdAt: string;
-    data?: Record<string, number | string | boolean | null | undefined>;
+    data?: Record<string, number | string | boolean | null>;
 }
 
 export type MatchHistoryEntry = MatchEvent;
@@ -187,17 +187,16 @@ const normalizeStringArray = (value: unknown) => {
     }, []);
 };
 
-const normalizeEventData = (value: unknown): MatchEvent['data'] => {
+export const normalizeMatchEventData = (value: unknown): MatchEvent['data'] => {
     if (!isRecord(value)) return undefined;
 
-    const normalized = Object.entries(value).reduce<Record<string, string | number | boolean | null | undefined>>(
+    const normalized = Object.entries(value).reduce<Record<string, string | number | boolean | null>>(
         (acc, [key, rawValue]) => {
             if (
                 typeof rawValue === 'string' ||
                 typeof rawValue === 'number' ||
                 typeof rawValue === 'boolean' ||
-                rawValue === null ||
-                rawValue === undefined
+                rawValue === null
             ) {
                 acc[key] = rawValue;
             }
@@ -411,7 +410,7 @@ export const normalizeHistory = (value: unknown): MatchEvent[] => {
         const period = Math.max(1, Math.round(toNonNegativeNumber(item.period, 1)));
         const matchTime = Math.round(toNonNegativeNumber(item.matchTime, 0));
         const createdAt = toNonEmptyString(item.createdAt, new Date(0).toISOString());
-        const data = normalizeEventData(item.data);
+        const data = normalizeMatchEventData(item.data);
 
         acc.push({
             side,

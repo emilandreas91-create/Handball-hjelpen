@@ -13,6 +13,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { type Team, useTeams } from '../hooks/useTeams';
 import { db } from '../lib/firebase';
 import { getTeamLookupNames, normalizeTeamNameKey } from '../lib/matchData';
+import { type CloudSyncState, prepareFirestorePayload, readScopedLocalStorage, removeScopedLocalStorage, writeScopedLocalStorage } from '../lib/persistence';
 import { DEFAULT_FRAME_DURATION_MS, MAX_TACTIC_PLAYERS, MIN_TACTIC_PLAYERS, cloneFrame, createEmptyTacticDraft, createPlayerToken, duplicateTokensAcrossFrames, getPlayerTokens, normalizeStoredTacticDocument, removeTokenAcrossFrames, type NormalizedTacticDocument, type TacticDraft, type TacticFrame } from '../lib/tacticsData';
 
 const TACTICS_DRAFT_KEY = 'handball-help-tactics-draft:v1';
@@ -37,6 +38,60 @@ const buildDraftSignature = (draft: TacticDraft) => JSON.stringify({
 const formatTime = (value: number | null) => value
     ? new Date(value).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
     : null;
+const normalizeStoredDraftPayload = (value: unknown) => {
+    if (typeof value !== 'object' || value === null) {
+        return null;
+    }
+
+    const source = value as Record<string, unknown>;
+    const storedDraft = source.draft ?? source;
+    const draftId = typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
+        ? storedDraft.id
+        : 'draft';
+    const normalizedDraft = normalizeStoredTacticDocument(draftId, storedDraft);
+    const recoveredDraft: TacticDraft = {
+        ...normalizedDraft,
+        id: draftId === 'draft' ? undefined : draftId,
+    };
+
+    return {
+        draft: recoveredDraft,
+        frameIndex: typeof source.frameIndex === 'number' ? source.frameIndex : 0,
+        lastLocalSavedAt: typeof source.lastLocalSavedAt === 'number' ? source.lastLocalSavedAt : null,
+        lastRemoteSavedAt: typeof source.lastRemoteSavedAt === 'number' ? source.lastRemoteSavedAt : null,
+        lastSavedSignature: typeof source.lastSavedSignature === 'string' ? source.lastSavedSignature : buildDraftSignature(recoveredDraft),
+    };
+};
+
+const buildStoredDraftPayload = (
+    draft: TacticDraft,
+    frameIndex: number,
+    lastLocalSavedAt: number,
+    lastRemoteSavedAt: number | null,
+    lastSavedSignature: string,
+) => {
+    const normalizedDraft = normalizeStoredTacticDocument(draft.id ?? 'draft', {
+        ...(draft.id ? { id: draft.id } : {}),
+        ...draft,
+    });
+
+    return {
+        draft: {
+            ...(draft.id ? { id: draft.id } : {}),
+            name: normalizedDraft.name,
+            teamId: normalizedDraft.teamId,
+            teamName: normalizedDraft.teamName,
+            courtType: normalizedDraft.courtType,
+            frames: normalizedDraft.frames,
+            createdAt: normalizedDraft.createdAt,
+            updatedAt: normalizedDraft.updatedAt,
+        },
+        frameIndex: Math.max(0, Math.min(frameIndex, Math.max(normalizedDraft.frames.length - 1, 0))),
+        lastLocalSavedAt,
+        lastRemoteSavedAt,
+        lastSavedSignature,
+    };
+};
 const findMatchingTeam = (teams: Team[], draft: Pick<TacticDraft, 'teamId' | 'teamName'>) => {
     if (draft.teamId) {
         const byId = teams.find((team) => team.id === draft.teamId);
@@ -67,6 +122,7 @@ export function Tactics() {
     const [draftRecovered, setDraftRecovered] = useState(false);
     const [lastLocalSavedAt, setLastLocalSavedAt] = useState<number | null>(null);
     const [lastRemoteSavedAt, setLastRemoteSavedAt] = useState<number | null>(null);
+    const [draftCloudSyncState, setDraftCloudSyncState] = useState<CloudSyncState>('idle');
     const [lastSavedSignature, setLastSavedSignature] = useState(() => buildDraftSignature(createEmptyTacticDraft()));
     const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
     const [hasResolvedRemoteDraft, setHasResolvedRemoteDraft] = useState(false);
@@ -82,7 +138,7 @@ export function Tactics() {
     const localStatusText = formattedLocalTime
         ? `Sist lagret lokalt ${formattedLocalTime}.`
         : 'Kladden oppdateres automatisk mens du jobber.';
-    const remoteStatusTitle = !isOnline
+    const legacyRemoteStatusTitle = !isOnline
         ? 'Offline'
         : isSaving
             ? 'Lagrer nå'
@@ -93,13 +149,39 @@ export function Tactics() {
                         ? `Sist lagret ${formattedRemoteTime}`
                         : 'Lagret'
                 : 'Ikke lagret enda';
-    const remoteStatusText = !isOnline
+    const legacyRemoteStatusText = !isOnline
         ? 'Du kan fortsette å tegne. Lagre til biblioteket når nettet er tilbake.'
         : draft.id
             ? hasDraftChanges
                 ? 'Trykk Lagre for å oppdatere den lagrede taktikken.'
                 : 'Taktikken ligger klar i biblioteket.'
             : 'Denne taktikken finnes foreløpig bare som lokal kladd.';
+    void legacyRemoteStatusTitle;
+    void legacyRemoteStatusText;
+    const remoteStatusTitle = !lastLocalSavedAt
+        ? 'Ikke lagret'
+        : !currentUser || !isOnline
+            ? 'Bare lokalt'
+            : draftCloudSyncState === 'error'
+                ? 'Kun lokalt akkurat nÃ¥'
+                : draftCloudSyncState === 'saving'
+                    ? 'Lagrer nÃ¥'
+                    : formattedRemoteTime
+                        ? `Bekreftet i sky ${formattedRemoteTime}`
+                        : 'Bare lokalt';
+    const remoteStatusText = !lastLocalSavedAt
+        ? 'Kladden opprettes automatisk nÃ¥r du begynner Ã¥ jobbe.'
+        : !currentUser
+            ? 'Logg inn for Ã¥ synke kladden mellom enheter.'
+            : !isOnline
+                ? 'Kladden finnes lokalt og sendes til skyen nÃ¥r nettet er tilbake.'
+                : draftCloudSyncState === 'error'
+                    ? 'Forrige sky-synk feilet. Du kan fortsette, og den lokale kladden er beholdt.'
+                    : draftCloudSyncState === 'saving'
+                        ? 'Vi venter pÃ¥ backend-bekreftelse fÃ¸r kladden markeres som lagret i sky.'
+                        : formattedRemoteTime
+                            ? 'Denne kladden er bekreftet lagret for denne brukeren og kan hentes tilbake pÃ¥ andre enheter.'
+                            : 'Denne taktikken finnes forelÃ¸pig bare som lokal kladd.';
     const saveButtonLabel = isSaving
         ? 'Lagrer...'
         : !isOnline
@@ -129,57 +211,56 @@ export function Tactics() {
     }, [lastLocalSavedAt]);
 
     useEffect(() => {
+        if (draftSyncTimeoutRef.current) {
+            clearTimeout(draftSyncTimeoutRef.current);
+            draftSyncTimeoutRef.current = null;
+        }
+
+        setHasHydratedDraft(false);
+        setDraft(createEmptyTacticDraft());
+        setFrameIndex(0);
+        setPendingPathStart(null);
+        setDraftRecovered(false);
+        setLastLocalSavedAt(null);
+        setLastRemoteSavedAt(null);
+        setDraftCloudSyncState('idle');
+        setLastSavedSignature(buildDraftSignature(createEmptyTacticDraft()));
+
         if (typeof window === 'undefined') {
             setHasHydratedDraft(true);
             return;
         }
 
         try {
-            const rawDraft = window.localStorage.getItem(TACTICS_DRAFT_KEY);
-            if (!rawDraft) {
+            const parsed = readScopedLocalStorage(
+                TACTICS_DRAFT_KEY,
+                currentUser?.uid,
+                normalizeStoredDraftPayload,
+            );
+            if (!parsed) {
                 return;
             }
 
-            const parsed = JSON.parse(rawDraft) as {
-                draft?: unknown;
-                frameIndex?: number;
-                lastLocalSavedAt?: number;
-                lastRemoteSavedAt?: number | null;
-                lastSavedSignature?: string;
-            };
-            const storedDraft = parsed.draft ?? parsed;
-            const normalizedDraft = normalizeStoredTacticDocument(
-                typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
-                    ? storedDraft.id
-                    : 'draft',
-                storedDraft,
-            );
-            const recoveredDraft: TacticDraft = {
-                ...normalizedDraft,
-                id: typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
-                    ? storedDraft.id
-                    : undefined,
-            };
-
             applyRecoveredDraft(
-                recoveredDraft,
-                typeof parsed.frameIndex === 'number' ? parsed.frameIndex : 0,
-                typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : null,
-                typeof parsed.lastRemoteSavedAt === 'number' ? parsed.lastRemoteSavedAt : null,
-                typeof parsed.lastSavedSignature === 'string' ? parsed.lastSavedSignature : buildDraftSignature(recoveredDraft),
+                parsed.draft,
+                parsed.frameIndex,
+                parsed.lastLocalSavedAt,
+                parsed.lastRemoteSavedAt,
+                parsed.lastSavedSignature,
                 true,
             );
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokal taktikk.', draftError);
-            window.localStorage.removeItem(TACTICS_DRAFT_KEY);
+            removeScopedLocalStorage(TACTICS_DRAFT_KEY, currentUser?.uid);
         } finally {
             setHasHydratedDraft(true);
         }
-    }, []);
+    }, [currentUser?.uid]);
 
     useEffect(() => {
         if (!currentUser) {
             setHasResolvedRemoteDraft(true);
+            setDraftCloudSyncState('idle');
             return;
         }
 
@@ -194,38 +275,29 @@ export function Tactics() {
                     return;
                 }
 
-                const parsed = snapshot.data() as {
-                    draft?: unknown;
-                    frameIndex?: number;
-                    lastLocalSavedAt?: number;
-                    lastRemoteSavedAt?: number | null;
-                    lastSavedSignature?: string;
-                };
-                const storedDraft = parsed.draft ?? parsed;
-                const normalizedDraft = normalizeStoredTacticDocument(
-                    typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
-                        ? storedDraft.id
-                        : 'draft',
-                    storedDraft,
-                );
-                const recoveredDraft: TacticDraft = {
-                    ...normalizedDraft,
-                    id: typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
-                        ? storedDraft.id
-                        : undefined,
-                };
-                const remoteUpdatedAt = typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : 0;
+                const parsed = normalizeStoredDraftPayload(snapshot.data());
+                if (!parsed) {
+                    setHasResolvedRemoteDraft(true);
+                    return;
+                }
+
+                const remoteUpdatedAt = parsed.lastLocalSavedAt ?? 0;
                 const localUpdatedAt = lastLocalSavedAtRef.current ?? 0;
 
                 if (remoteUpdatedAt > localUpdatedAt) {
                     applyRecoveredDraft(
-                        recoveredDraft,
-                        typeof parsed.frameIndex === 'number' ? parsed.frameIndex : 0,
-                        typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : null,
-                        typeof parsed.lastRemoteSavedAt === 'number' ? parsed.lastRemoteSavedAt : null,
-                        typeof parsed.lastSavedSignature === 'string' ? parsed.lastSavedSignature : buildDraftSignature(recoveredDraft),
+                        parsed.draft,
+                        parsed.frameIndex,
+                        parsed.lastLocalSavedAt,
+                        parsed.lastRemoteSavedAt,
+                        parsed.lastSavedSignature,
                         true,
                     );
+                }
+
+                if (remoteUpdatedAt > 0) {
+                    setLastRemoteSavedAt(remoteUpdatedAt);
+                    setDraftCloudSyncState('synced');
                 }
 
                 setHasResolvedRemoteDraft(true);
@@ -269,25 +341,48 @@ export function Tactics() {
         }
 
         const savedAt = Date.now();
-        const nextStoredDraft = {
+        const nextStoredDraft = buildStoredDraftPayload(
             draft,
             frameIndex,
-            lastLocalSavedAt: savedAt,
+            savedAt,
             lastRemoteSavedAt,
             lastSavedSignature,
-        };
+        );
 
-        window.localStorage.setItem(TACTICS_DRAFT_KEY, JSON.stringify(nextStoredDraft));
+        writeScopedLocalStorage(TACTICS_DRAFT_KEY, currentUser?.uid, nextStoredDraft);
         setLastLocalSavedAt(savedAt);
 
         if (!currentUser || !hasResolvedRemoteDraft) {
             return;
         }
 
+        setDraftCloudSyncState('saving');
         draftSyncTimeoutRef.current = setTimeout(() => {
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', TACTICS_DRAFT_REMOTE_DOC), nextStoredDraft).catch((draftError) => {
-                console.error('Kunne ikke synkronisere taktikk-kladd til skyen.', draftError);
-            });
+            const nextRemoteDraft = normalizeStoredDraftPayload(prepareFirestorePayload(nextStoredDraft));
+            if (!nextRemoteDraft) {
+                console.error('Ugyldig taktikk-kladd ble stoppet før sky-synk.');
+                setDraftCloudSyncState('error');
+                return;
+            }
+
+            void setDoc(
+                doc(db, 'users', currentUser.uid, 'appState', TACTICS_DRAFT_REMOTE_DOC),
+                prepareFirestorePayload(buildStoredDraftPayload(
+                    nextRemoteDraft.draft,
+                    nextRemoteDraft.frameIndex,
+                    nextRemoteDraft.lastLocalSavedAt ?? savedAt,
+                    nextRemoteDraft.lastRemoteSavedAt,
+                    nextRemoteDraft.lastSavedSignature,
+                )),
+            )
+                .then(() => {
+                    setLastRemoteSavedAt(savedAt);
+                    setDraftCloudSyncState('synced');
+                })
+                .catch((draftError) => {
+                    console.error('Kunne ikke synkronisere taktikk-kladd til skyen.', draftError);
+                    setDraftCloudSyncState('error');
+                });
         }, 700);
 
         return () => {
@@ -322,7 +417,7 @@ export function Tactics() {
         setActiveTool('token');
         setPendingPathStart(null);
         setDraftRecovered(false);
-        setLastRemoteSavedAt(nextDraft.id ? Date.now() : null);
+        setDraftCloudSyncState('idle');
         setLastSavedSignature(buildDraftSignature(nextDraft));
         setInfo(null);
     };
@@ -335,7 +430,8 @@ export function Tactics() {
     const handleOpenTactic = (tactic: NormalizedTacticDocument) => {
         const nextDraft = cloneDraft(tactic);
         resetEditor(nextDraft);
-        setLastRemoteSavedAt(tactic.sortUpdatedAtMs || Date.now());
+        setLastRemoteSavedAt(tactic.sortUpdatedAtMs || null);
+        setDraftCloudSyncState(tactic.sortUpdatedAtMs ? 'synced' : 'idle');
         setMessage(`"${tactic.name}" er åpnet.`);
     };
 
@@ -378,7 +474,6 @@ export function Tactics() {
             const savedDraft = { ...draft, id: saveResult.id, name: trimmedName, teamId: selectedTeam.id, teamName: selectedTeam.name, frames: nextFrames, createdAt: saveResult.createdAt, updatedAt: saveResult.updatedAt };
             setDraft(savedDraft);
             setLastSavedSignature(buildDraftSignature(savedDraft));
-            setLastRemoteSavedAt(Date.now());
             setDraftRecovered(false);
             setMessage('Taktikken er lagret.');
         } catch (saveError) {
@@ -436,7 +531,7 @@ export function Tactics() {
                         </p>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Bibliotek</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Sky-kladd</p>
                         <p className="mt-2 text-sm font-semibold text-white">{remoteStatusTitle}</p>
                         <p className="mt-1 text-xs leading-5 text-gray-400">{remoteStatusText}</p>
                     </div>

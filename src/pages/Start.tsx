@@ -15,6 +15,7 @@ import {
     normalizeLiveStatsDefaults,
     type LiveStatsDefaults,
 } from '../lib/liveStatsState';
+import { readScopedLocalStorage } from '../lib/persistence';
 
 interface ActionCardProps {
     title: string;
@@ -176,6 +177,7 @@ export function Start() {
     const { tactics, loading: tacticsLoading } = useTactics();
     const isOnline = useOnlineStatus();
     const [recentMatchDefaults, setRecentMatchDefaults] = useState<LiveStatsDefaults | null>(null);
+    const [recentMatchDefaultsSource, setRecentMatchDefaultsSource] = useState<'local' | 'cloud' | null>(null);
     const {
         matchTime,
         formatTime,
@@ -184,28 +186,32 @@ export function Start() {
         awayState,
         history,
         draftRecovered,
+        draftRecoveredFrom,
         lastDraftSavedAt,
     } = useMatchContext();
 
     useEffect(() => {
+        setRecentMatchDefaults(null);
+        setRecentMatchDefaultsSource(null);
+
         if (typeof window === 'undefined') {
             return;
         }
 
         try {
-            const rawDefaults = window.localStorage.getItem(LIVE_STATS_DEFAULTS_KEY);
-            if (!rawDefaults) {
-                return;
-            }
-
-            const parsedDefaults = normalizeLiveStatsDefaults(JSON.parse(rawDefaults));
+            const parsedDefaults = readScopedLocalStorage(
+                LIVE_STATS_DEFAULTS_KEY,
+                currentUser?.uid,
+                normalizeLiveStatsDefaults,
+            );
             if (parsedDefaults) {
                 setRecentMatchDefaults(parsedDefaults);
+                setRecentMatchDefaultsSource('local');
             }
         } catch (error) {
             console.error('Kunne ikke lese sist brukte kampvalg.', error);
         }
-    }, []);
+    }, [currentUser?.uid]);
 
     useEffect(() => {
         if (!currentUser) {
@@ -228,7 +234,12 @@ export function Start() {
                 setRecentMatchDefaults((current) => {
                     const currentUpdatedAt = current?.updatedAt ?? 0;
                     const remoteUpdatedAt = remoteDefaults.updatedAt ?? 0;
-                    return remoteUpdatedAt >= currentUpdatedAt ? remoteDefaults : current;
+                    if (remoteUpdatedAt >= currentUpdatedAt) {
+                        setRecentMatchDefaultsSource('cloud');
+                        return remoteDefaults;
+                    }
+
+                    return current;
                 });
             },
             (error) => {
@@ -253,7 +264,9 @@ export function Start() {
         .find((teamName) => typeof teamName === 'string' && teams.some((team) => team.name === teamName)) ?? null;
     const recentTeamName = recentTeamFromMatch || latestTactic?.teamName || teams[0]?.name || null;
     const recentTeamDetail = recentTeamFromMatch
-        ? 'Sist valgt i kampoppsettet.'
+        ? recentMatchDefaultsSource === 'cloud'
+            ? 'Sist valgt i kampoppsettet og bekreftet i sky.'
+            : 'Sist valgt i kampoppsettet pÃ¥ denne enheten.'
         : latestTactic?.teamName
             ? `Fra taktikken "${latestTactic.name}".`
             : teams.length > 0
@@ -393,7 +406,9 @@ export function Start() {
                         <StatusPill
                             icon={Activity}
                             label="Lokal kladd"
-                            detail={formattedDraftTime ? `Oppdatert ${formattedDraftTime}` : 'Kampkladd aktiv'}
+                            detail={formattedDraftTime
+                                ? `${draftRecoveredFrom === 'cloud' ? 'Skykladd' : 'Lokal kladd'} ${formattedDraftTime}`
+                                : 'Kampkladd aktiv'}
                         />
                     ) : null}
 
