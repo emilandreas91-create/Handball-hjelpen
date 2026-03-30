@@ -39,6 +39,7 @@ import {
     type LiveStatsDefaults,
     type LiveStatsUiDraft,
 } from '../lib/liveStatsState';
+import { type CloudSyncState, prepareFirestorePayload, readScopedLocalStorage, removeScopedLocalStorage, writeScopedLocalStorage } from '../lib/persistence';
 import {
     buildStoredMatchDocument,
     type CustomStatDefinition,
@@ -48,6 +49,12 @@ import {
 } from '../lib/matchData';
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error';
+type PendingShotState = {
+    x: number;
+    y: number;
+    side: TeamSide;
+    teamName: string;
+};
 
 interface FeedbackState {
     type: 'success' | 'error' | 'info' | 'warning';
@@ -79,7 +86,10 @@ export function Stats() {
         history,
         resetMatch,
         draftRecovered,
+        draftRecoveredFrom,
         lastDraftSavedAt,
+        cloudSyncState: matchCloudSyncState,
+        lastCloudSyncAt: lastMatchCloudSyncAt,
     } = useMatchContext();
 
     const { teams, loading: teamsLoading, error } = useTeams();
@@ -92,11 +102,11 @@ export function Stats() {
     const [matchName, setMatchName] = useState('');
     const [isEditMode, setIsEditMode] = useState(false);
     const [customButtons, setCustomButtons] = useState<LiveStatsButtonDefinition[]>([]);
-    const [pendingShot, setPendingShot] = useState<{ x: number; y: number } | null>(null);
+    const [pendingShot, setPendingShot] = useState<PendingShotState | null>(null);
     const [pendingGoalPlacement, setPendingGoalPlacement] = useState<{ x: number; y: number } | null>(null);
     const [saveState, setSaveState] = useState<SaveState>('idle');
     const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-    const [lastRemoteSaveAt, setLastRemoteSaveAt] = useState<number | null>(null);
+    const [lastHistorySaveAt, setLastHistorySaveAt] = useState<number | null>(null);
     const [hasHydratedUiDraft, setHasHydratedUiDraft] = useState(false);
     const [isMatchStarted, setIsMatchStarted] = useState(false);
     const [showSetupPanel, setShowSetupPanel] = useState(false);
@@ -108,6 +118,10 @@ export function Stats() {
     const [isSaveSuccessDialogOpen, setIsSaveSuccessDialogOpen] = useState(false);
     const [lastUiDraftSavedAt, setLastUiDraftSavedAt] = useState<number | null>(null);
     const [lastDefaultsSavedAt, setLastDefaultsSavedAt] = useState<number | null>(null);
+    const [uiCloudSyncState, setUiCloudSyncState] = useState<CloudSyncState>('idle');
+    const [defaultsCloudSyncState, setDefaultsCloudSyncState] = useState<CloudSyncState>('idle');
+    const [lastUiCloudSyncAt, setLastUiCloudSyncAt] = useState<number | null>(null);
+    const [lastDefaultsCloudSyncAt, setLastDefaultsCloudSyncAt] = useState<number | null>(null);
     const [hasResolvedRemoteUiDraft, setHasResolvedRemoteUiDraft] = useState(false);
     const [hasResolvedRemoteDefaults, setHasResolvedRemoteDefaults] = useState(false);
 
@@ -127,6 +141,34 @@ export function Stats() {
         setLastDefaultsSavedAt(typeof defaults.updatedAt === 'number' ? defaults.updatedAt : null);
     };
 
+    const resetUiDraftState = () => {
+        setActiveSide('home');
+        setHomeTeamId('');
+        setAwayTeamId('');
+        setMatchName('');
+        setIsEditMode(false);
+        setCustomButtons([]);
+        setPendingShot(null);
+        setPendingGoalPlacement(null);
+        setSaveState('idle');
+        setFeedback(null);
+        setLastHistorySaveAt(null);
+        setIsMatchStarted(false);
+        setShowSetupPanel(false);
+        setEditingButtonId(null);
+        setButtonLabelDraft('');
+        setPendingDeleteButtonId(null);
+        setIsResetDialogOpen(false);
+        setSavedMatchName('');
+        setIsSaveSuccessDialogOpen(false);
+        setLastUiDraftSavedAt(null);
+        setLastDefaultsSavedAt(null);
+        setUiCloudSyncState('idle');
+        setDefaultsCloudSyncState('idle');
+        setLastUiCloudSyncAt(null);
+        setLastDefaultsCloudSyncAt(null);
+    };
+
     useEffect(() => {
         lastUiDraftSavedAtRef.current = lastUiDraftSavedAt;
     }, [lastUiDraftSavedAt]);
@@ -141,39 +183,57 @@ export function Stats() {
     }, [awayTeamId, homeTeamId]);
 
     useEffect(() => {
+        if (uiDraftSyncTimeoutRef.current) {
+            clearTimeout(uiDraftSyncTimeoutRef.current);
+            uiDraftSyncTimeoutRef.current = null;
+        }
+
+        if (defaultsSyncTimeoutRef.current) {
+            clearTimeout(defaultsSyncTimeoutRef.current);
+            defaultsSyncTimeoutRef.current = null;
+        }
+
+        setHasHydratedUiDraft(false);
+        resetUiDraftState();
+
         if (typeof window === 'undefined') {
             setHasHydratedUiDraft(true);
             return;
         }
 
         try {
-            const rawDraft = window.localStorage.getItem(LIVE_STATS_UI_KEY);
-            if (!rawDraft) {
-                const rawDefaults = window.localStorage.getItem(LIVE_STATS_DEFAULTS_KEY);
-                if (rawDefaults) {
-                    const parsedDefaults = normalizeLiveStatsDefaults(JSON.parse(rawDefaults));
-                    if (parsedDefaults) {
-                        applyDefaults(parsedDefaults);
-                    }
-                }
+            const parsedDraft = readScopedLocalStorage(
+                LIVE_STATS_UI_KEY,
+                currentUser?.uid,
+                normalizeLiveStatsUiDraft,
+            );
+            if (parsedDraft) {
+                applyUiDraft(parsedDraft);
                 return;
             }
 
-            const parsedDraft = normalizeLiveStatsUiDraft(JSON.parse(rawDraft));
-            if (parsedDraft) {
-                applyUiDraft(parsedDraft);
+            const parsedDefaults = readScopedLocalStorage(
+                LIVE_STATS_DEFAULTS_KEY,
+                currentUser?.uid,
+                normalizeLiveStatsDefaults,
+            );
+            if (parsedDefaults) {
+                applyDefaults(parsedDefaults);
             }
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokalt kampoppsett.', draftError);
-            window.localStorage.removeItem(LIVE_STATS_UI_KEY);
+            removeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid);
+            removeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid);
         } finally {
             setHasHydratedUiDraft(true);
         }
-    }, []);
+    }, [currentUser?.uid]);
 
     useEffect(() => {
         if (!currentUser) {
             setHasResolvedRemoteUiDraft(true);
+            setUiCloudSyncState('idle');
+            setLastUiCloudSyncAt(null);
             return;
         }
 
@@ -196,6 +256,11 @@ export function Stats() {
                     applyUiDraft(remoteDraft);
                 }
 
+                if (remoteDraft && remoteUpdatedAt > 0) {
+                    setLastUiCloudSyncAt(remoteUpdatedAt);
+                    setUiCloudSyncState('synced');
+                }
+
                 setHasResolvedRemoteUiDraft(true);
             },
             (draftError) => {
@@ -210,6 +275,8 @@ export function Stats() {
     useEffect(() => {
         if (!currentUser) {
             setHasResolvedRemoteDefaults(true);
+            setDefaultsCloudSyncState('idle');
+            setLastDefaultsCloudSyncAt(null);
             return;
         }
 
@@ -230,6 +297,11 @@ export function Stats() {
 
                 if (remoteDefaults && remoteUpdatedAt > localUpdatedAt && !homeTeamIdRef.current && !awayTeamIdRef.current) {
                     applyDefaults(remoteDefaults);
+                }
+
+                if (remoteDefaults && remoteUpdatedAt > 0) {
+                    setLastDefaultsCloudSyncAt(remoteUpdatedAt);
+                    setDefaultsCloudSyncState('synced');
                 }
 
                 setHasResolvedRemoteDefaults(true);
@@ -263,20 +335,24 @@ export function Stats() {
         );
 
         if (!hasUiContent) {
-            window.localStorage.removeItem(LIVE_STATS_UI_KEY);
+            removeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid);
             setLastUiDraftSavedAt(null);
+            setUiCloudSyncState('idle');
+            setLastUiCloudSyncAt(null);
 
             if (currentUser && hasResolvedRemoteUiDraft) {
-                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC)).catch((draftError) => {
-                    console.error('Kunne ikke fjerne kampoppsett fra skyen.', draftError);
-                });
+                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC))
+                    .catch((draftError) => {
+                        console.error('Kunne ikke fjerne kampoppsett fra skyen.', draftError);
+                        setUiCloudSyncState('error');
+                    });
             }
 
             return;
         }
 
         const updatedAt = Date.now();
-        const nextUiDraft: LiveStatsUiDraft = {
+        const nextUiDraft = normalizeLiveStatsUiDraft({
             activeSide,
             homeTeamId,
             awayTeamId,
@@ -284,19 +360,39 @@ export function Stats() {
             isMatchStarted,
             customButtons,
             updatedAt,
-        };
+        });
 
-        window.localStorage.setItem(LIVE_STATS_UI_KEY, JSON.stringify(nextUiDraft));
-        setLastUiDraftSavedAt(updatedAt);
+        if (!nextUiDraft) {
+            console.error('Ugyldig kampoppsett ble stoppet før lagring.');
+            setUiCloudSyncState('error');
+            return;
+        }
+
+        writeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid, nextUiDraft);
+        setLastUiDraftSavedAt(nextUiDraft.updatedAt ?? null);
 
         if (!currentUser || !hasResolvedRemoteUiDraft) {
             return;
         }
 
+        setUiCloudSyncState('saving');
         uiDraftSyncTimeoutRef.current = setTimeout(() => {
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC), nextUiDraft).catch((draftError) => {
-                console.error('Kunne ikke synkronisere kampoppsett til skyen.', draftError);
-            });
+            const nextRemoteUiDraft = normalizeLiveStatsUiDraft(prepareFirestorePayload(nextUiDraft));
+            if (!nextRemoteUiDraft) {
+                console.error('Ugyldig kampoppsett ble stoppet før sky-synk.');
+                setUiCloudSyncState('error');
+                return;
+            }
+
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC), nextRemoteUiDraft)
+                .then(() => {
+                    setLastUiCloudSyncAt(updatedAt);
+                    setUiCloudSyncState('synced');
+                })
+                .catch((draftError) => {
+                    console.error('Kunne ikke synkronisere kampoppsett til skyen.', draftError);
+                    setUiCloudSyncState('error');
+                });
         }, 700);
 
         return () => {
@@ -318,26 +414,59 @@ export function Stats() {
         }
 
         if (!homeTeamId && !awayTeamId) {
+            removeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid);
+            setLastDefaultsSavedAt(null);
+            setDefaultsCloudSyncState('idle');
+            setLastDefaultsCloudSyncAt(null);
+
+            if (currentUser && hasResolvedRemoteDefaults) {
+                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC))
+                    .catch((defaultsError) => {
+                        console.error('Kunne ikke fjerne lagvalg fra skyen.', defaultsError);
+                        setDefaultsCloudSyncState('error');
+                    });
+            }
+
             return;
         }
 
-        const nextDefaults: LiveStatsDefaults = {
+        const nextDefaults = normalizeLiveStatsDefaults({
             homeTeamId,
             awayTeamId,
             updatedAt: Date.now(),
-        };
+        });
 
-        window.localStorage.setItem(LIVE_STATS_DEFAULTS_KEY, JSON.stringify(nextDefaults));
+        if (!nextDefaults) {
+            console.error('Ugyldig lagvalg ble stoppet før lagring.');
+            setDefaultsCloudSyncState('error');
+            return;
+        }
+
+        writeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid, nextDefaults);
         setLastDefaultsSavedAt(nextDefaults.updatedAt ?? null);
 
         if (!currentUser || !hasResolvedRemoteDefaults) {
             return;
         }
 
+        setDefaultsCloudSyncState('saving');
         defaultsSyncTimeoutRef.current = setTimeout(() => {
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC), nextDefaults).catch((defaultsError) => {
-                console.error('Kunne ikke synkronisere lagvalg til skyen.', defaultsError);
-            });
+            const nextRemoteDefaults = normalizeLiveStatsDefaults(prepareFirestorePayload(nextDefaults));
+            if (!nextRemoteDefaults) {
+                console.error('Ugyldig lagvalg ble stoppet før sky-synk.');
+                setDefaultsCloudSyncState('error');
+                return;
+            }
+
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC), nextRemoteDefaults)
+                .then(() => {
+                    setLastDefaultsCloudSyncAt(nextDefaults.updatedAt ?? Date.now());
+                    setDefaultsCloudSyncState('synced');
+                })
+                .catch((defaultsError) => {
+                    console.error('Kunne ikke synkronisere lagvalg til skyen.', defaultsError);
+                    setDefaultsCloudSyncState('error');
+                });
         }, 700);
 
         return () => {
@@ -388,11 +517,44 @@ export function Stats() {
         };
     };
 
+    const cancelPendingShot = (message?: string) => {
+        setPendingShot(null);
+        setPendingGoalPlacement(null);
+
+        if (message) {
+            setFeedback({
+                type: 'info',
+                message,
+            });
+        }
+    };
+
+    const handleSelectActiveSide = (nextSide: TeamSide) => {
+        if (pendingShot && pendingShot.side !== nextSide) {
+            cancelPendingShot('Skuddregistreringen ble lukket fordi du byttet aktivt lag.');
+        }
+
+        setActiveSide(nextSide);
+    };
+
+    const handleTeamSelectionChange = (side: TeamSide, value: string) => {
+        if (pendingShot) {
+            cancelPendingShot('Skuddregistreringen ble lukket fordi lagvalget ble endret.');
+        }
+
+        if (side === 'home') {
+            setHomeTeamId(value);
+            return;
+        }
+
+        setAwayTeamId(value);
+    };
+
     const handleCombinedShot = (result: 'goal' | 'save' | 'miss') => {
         if (!pendingShot || !pendingGoalPlacement) return;
 
         addCombinedShot(
-            activeSide,
+            pendingShot.side,
             pendingShot.x,
             pendingShot.y,
             pendingGoalPlacement.x,
@@ -400,11 +562,6 @@ export function Stats() {
             result,
         );
 
-        setPendingShot(null);
-        setPendingGoalPlacement(null);
-    };
-
-    const cancelPendingShot = () => {
         setPendingShot(null);
         setPendingGoalPlacement(null);
     };
@@ -540,6 +697,15 @@ export function Stats() {
     }, [awayTeamId, customButtons, homeTeamId, lastAction]);
 
     const sameTeamsSelected = homeTeamId && awayTeamId && homeTeamId === awayTeamId;
+    const hasUiDraftContent = (
+        activeSide !== 'home' ||
+        Boolean(homeTeamId) ||
+        Boolean(awayTeamId) ||
+        Boolean(matchName) ||
+        isMatchStarted ||
+        customButtons.length > 0
+    );
+    const hasDefaultSelections = Boolean(homeTeamId) || Boolean(awayTeamId);
     const hasLiveMatchContent = (
         matchTime > 0 ||
         history.length > 0 ||
@@ -548,30 +714,44 @@ export function Stats() {
         homeState.shotLocations.length > 0 ||
         awayState.shotLocations.length > 0
     );
+    const hasAnyPersistedContent = hasLiveMatchContent || hasUiDraftContent || hasDefaultSelections;
     const isLivePhase = isMatchStarted || hasLiveMatchContent;
     const canSaveMatch = Boolean(currentUser) && !sameTeamsSelected && !pendingShot && isOnline && saveState !== 'saving';
-    const hasSavedToCloud = lastRemoteSaveAt !== null;
-    const hasUnsavedChangesSinceSave = Boolean(
-        lastRemoteSaveAt &&
+    const hasHistorySave = lastHistorySaveAt !== null;
+    const hasUnsavedChangesSinceHistorySave = Boolean(
+        lastHistorySaveAt &&
         lastDraftSavedAt &&
-        lastDraftSavedAt > lastRemoteSaveAt
+        lastDraftSavedAt > lastHistorySaveAt
     );
     const formattedDraftTime = lastDraftSavedAt
         ? new Date(lastDraftSavedAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
         : null;
-    const formattedRemoteSaveTime = lastRemoteSaveAt
-        ? new Date(lastRemoteSaveAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
+    const formattedHistorySaveTime = lastHistorySaveAt
+        ? new Date(lastHistorySaveAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
         : null;
-    const localDraftTitle = draftRecovered ? 'Gjenopprettet' : lastDraftSavedAt ? 'Aktiv' : 'Klar';
+    const hasSavedToCloud = hasHistorySave;
+    const hasUnsavedChangesSinceSave = hasUnsavedChangesSinceHistorySave;
+    const formattedRemoteSaveTime = formattedHistorySaveTime;
+    const lastConfirmedCloudSyncAt = Math.max(
+        lastMatchCloudSyncAt ?? 0,
+        lastUiCloudSyncAt ?? 0,
+        lastDefaultsCloudSyncAt ?? 0,
+    ) || null;
+    const formattedCloudSyncTime = lastConfirmedCloudSyncAt
+        ? new Date(lastConfirmedCloudSyncAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
+        : null;
+    const isAnyCloudSyncSaving = [matchCloudSyncState, uiCloudSyncState, defaultsCloudSyncState].includes('saving');
+    const hasAnyCloudSyncError = [matchCloudSyncState, uiCloudSyncState, defaultsCloudSyncState].includes('error');
+    const localDraftTitle = draftRecovered ? 'Gjenopprettet' : lastDraftSavedAt ? 'Lagret lokalt' : 'Ikke lagret';
     const localDraftText = draftRecovered && formattedDraftTime
-        ? `Gjenopprettet kl. ${formattedDraftTime}.`
+        ? `Gjenopprettet fra ${draftRecoveredFrom === 'cloud' ? 'skyen' : 'denne enheten'} kl. ${formattedDraftTime}.`
         : formattedDraftTime
-            ? `Sist oppdatert ${formattedDraftTime}.`
+            ? `Sist lagret lokalt ${formattedDraftTime}.`
             : 'Starter når du registrerer noe.';
     const localDraftHint = isOnline
-        ? 'Beholder kampen hvis siden oppdateres.'
+        ? 'Kladden beholdes lokalt hvis siden oppdateres.'
         : 'Fortsetter å sikre kampen lokalt uten nett.';
-    const cloudStatusTitle = !isOnline
+    const legacyCloudStatusTitle = !isOnline
         ? 'Venter på nett'
         : saveState === 'saving'
             ? 'Lagrer nå...'
@@ -580,7 +760,7 @@ export function Stats() {
                 : hasSavedToCloud && formattedRemoteSaveTime
                     ? `Sist lagret ${formattedRemoteSaveTime}`
                     : 'Ikke lagret ennå';
-    const cloudStatusHint = !isOnline
+    const legacyCloudStatusHint = !isOnline
         ? 'Lagre til laghistorikken når forbindelsen er tilbake.'
         : saveState === 'saving'
             ? 'Sender kampen til laghistorikken nå.'
@@ -589,6 +769,32 @@ export function Stats() {
                 : hasSavedToCloud
                     ? 'Laghistorikken er oppdatert.'
                     : 'Første lagring sender kampen til laghistorikken.';
+    void legacyCloudStatusTitle;
+    void legacyCloudStatusHint;
+    const cloudStatusTitle = !hasAnyPersistedContent
+        ? 'Ikke lagret'
+        : !currentUser || !isOnline
+            ? 'Bare lokalt'
+            : hasAnyCloudSyncError
+                ? 'Kun lokalt akkurat nÃ¥'
+                : isAnyCloudSyncSaving
+                    ? 'Lagrer nÃ¥'
+                    : formattedCloudSyncTime
+                        ? `Bekreftet i sky ${formattedCloudSyncTime}`
+                        : 'Bare lokalt';
+    const cloudStatusHint = !hasAnyPersistedContent
+        ? 'Sky-synk starter nÃ¥r du har en aktiv kladd eller et lagvalg.'
+        : !currentUser
+            ? 'Logg inn for Ã¥ synke kladd og kampoppsett mellom enheter.'
+            : !isOnline
+                ? 'Endringene ligger trygt lokalt og sendes nÃ¥r nettet er tilbake.'
+                : hasAnyCloudSyncError
+                    ? 'Forrige sky-synk feilet. Du kan fortsette uten at siden stopper, og lokal kladd er beholdt.'
+                    : isAnyCloudSyncSaving
+                        ? 'Vi venter pÃ¥ backend-bekreftelse fÃ¸r kladden merkes som lagret i sky.'
+                        : formattedCloudSyncTime
+                            ? 'Kladd, kampoppsett og sist brukte lagvalg er bekreftet lagret for denne brukeren.'
+                            : 'Du har lokale endringer, men ingenting er bekreftet lagret i sky ennÃ¥.';
     const saveButtonLabel = saveState === 'saving'
         ? 'Lagrer kamp...'
         : !isOnline
@@ -659,9 +865,12 @@ export function Stats() {
         try {
             setSaveState('saving');
             const saveTimestamp = Timestamp.now();
-            const customDefinitions: CustomStatDefinition[] = customButtons;
-
-            await addDoc(collection(db, 'users', currentUser.uid, 'matches'), buildStoredMatchDocument({
+            const customDefinitions: CustomStatDefinition[] = customButtons.map((button) => ({
+                id: button.id,
+                label: button.label.trim(),
+                color: button.color,
+            }));
+            const nextMatchDocument = prepareFirestorePayload(buildStoredMatchDocument({
                 name,
                 date: saveTimestamp,
                 savedAt: saveTimestamp,
@@ -677,8 +886,10 @@ export function Stats() {
                 customDefinitions,
             }));
 
+            await addDoc(collection(db, 'users', currentUser.uid, 'matches'), nextMatchDocument);
+
             setSaveState('success');
-            setLastRemoteSaveAt(Date.now());
+            setLastHistorySaveAt(Date.now());
             setSavedMatchName(name);
             setIsSaveSuccessDialogOpen(true);
             setFeedback({
@@ -703,7 +914,7 @@ export function Stats() {
         setPendingShot(null);
         setPendingGoalPlacement(null);
         setSaveState('idle');
-        setLastRemoteSaveAt(null);
+        setLastHistorySaveAt(null);
         setSavedMatchName('');
         setIsSaveSuccessDialogOpen(false);
         setIsResetDialogOpen(false);
@@ -767,7 +978,7 @@ export function Stats() {
                             <select
                                 className="min-h-[56px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-white focus:outline-none focus:ring-1 focus:ring-primary"
                                 value={homeTeamId}
-                                onChange={(e) => setHomeTeamId(e.target.value)}
+                                onChange={(e) => handleTeamSelectionChange('home', e.target.value)}
                             >
                                 <option value="Hjemme">Hjemme</option>
                                 {teams.map((team) => (
@@ -783,7 +994,7 @@ export function Stats() {
                             <select
                                 className="min-h-[56px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-white focus:outline-none focus:ring-1 focus:ring-secondary"
                                 value={awayTeamId}
-                                onChange={(e) => setAwayTeamId(e.target.value)}
+                                onChange={(e) => handleTeamSelectionChange('away', e.target.value)}
                             >
                                 <option value="Borte">Borte</option>
                                 {teams.map((team) => (
@@ -874,8 +1085,8 @@ export function Stats() {
                 {draftRecovered && hasLiveMatchContent ? renderFeedback({
                     type: 'info',
                     message: formattedDraftTime
-                        ? `Siste kamp er gjenopptatt fra lokal kladd kl. ${formattedDraftTime}.`
-                        : 'Siste kamp er gjenopptatt fra lokal kladd.'
+                        ? `Siste kamp er gjenopptatt fra ${draftRecoveredFrom === 'cloud' ? 'skykladd' : 'lokal kladd'} kl. ${formattedDraftTime}.`
+                        : `Siste kamp er gjenopptatt fra ${draftRecoveredFrom === 'cloud' ? 'skykladd' : 'lokal kladd'}.`
                 }) : null}
                 {error ? renderFeedback({ type: 'error', message: error }) : null}
                 {sameTeamsSelected ? renderFeedback({
@@ -930,7 +1141,7 @@ export function Stats() {
             <div className="mb-4 grid grid-cols-2 gap-2 sm:hidden">
                 <button
                     type="button"
-                    onClick={() => setActiveSide('home')}
+                    onClick={() => handleSelectActiveSide('home')}
                     className={clsx(
                         'rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-all',
                         activeSide === 'home'
@@ -943,7 +1154,7 @@ export function Stats() {
                 </button>
                 <button
                     type="button"
-                    onClick={() => setActiveSide('away')}
+                    onClick={() => handleSelectActiveSide('away')}
                     className={clsx(
                         'rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-all',
                         activeSide === 'away'
@@ -967,12 +1178,12 @@ export function Stats() {
                                 ? 'border-primary bg-primary/10 shadow-[0_0_20px_rgba(0,243,255,0.2)]'
                                 : 'border-transparent opacity-70 hover:opacity-100',
                         )}
-                        onClick={() => setActiveSide('home')}
+                        onClick={() => handleSelectActiveSide('home')}
                     >
                         <select
                             className="min-h-[44px] w-full rounded-xl border border-white/10 bg-black/30 px-3 text-center text-sm font-bold uppercase text-white focus:outline-none focus:ring-1 focus:ring-primary sm:text-xl"
                             value={homeTeamId}
-                            onChange={(e) => setHomeTeamId(e.target.value)}
+                            onChange={(e) => handleTeamSelectionChange('home', e.target.value)}
                         >
                             <option value="Hjemme">Hjemme</option>
                             {teams.map((team) => (
@@ -1006,12 +1217,12 @@ export function Stats() {
                                 ? 'border-secondary bg-secondary/10 shadow-[0_0_20px_rgba(255,102,0,0.2)]'
                                 : 'border-transparent opacity-70 hover:opacity-100',
                         )}
-                        onClick={() => setActiveSide('away')}
+                        onClick={() => handleSelectActiveSide('away')}
                     >
                         <select
                             className="min-h-[44px] w-full rounded-xl border border-white/10 bg-black/30 px-3 text-center text-sm font-bold uppercase text-white focus:outline-none focus:ring-1 focus:ring-secondary sm:text-xl"
                             value={awayTeamId}
-                            onChange={(e) => setAwayTeamId(e.target.value)}
+                            onChange={(e) => handleTeamSelectionChange('away', e.target.value)}
                         >
                             <option value="Borte">Borte</option>
                             {teams.map((team) => (
@@ -1137,7 +1348,7 @@ export function Stats() {
                     <div className="w-full">
                         <CourtVisualizer
                             locations={activeState.shotLocations}
-                            onAddLocation={(x, y) => setPendingShot({ x, y })}
+                            onAddLocation={(x, y) => setPendingShot({ x, y, side: activeSide, teamName: activeTeamName })}
                             teamName={activeTeamName}
                         />
                     </div>
@@ -1267,7 +1478,7 @@ export function Stats() {
                     <div className="relative w-full rounded-t-3xl border border-white/10 bg-card p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="shot-dialog-title">
                         <button
                             type="button"
-                            onClick={cancelPendingShot}
+                            onClick={() => cancelPendingShot()}
                             className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-gray-400 transition-colors hover:bg-white/20 hover:text-white"
                             aria-label="Lukk skuddregistrering"
                         >
@@ -1280,7 +1491,7 @@ export function Stats() {
                         <p className="mb-6 text-center text-sm text-gray-400">
                             {!pendingGoalPlacement
                                 ? 'Plasser skuddet i målet for å fullføre registreringen.'
-                                : `Registrering gjelder ${activeTeamName}. Velg resultatet under.`}
+                                : `Registrering gjelder ${pendingShot.teamName}. Velg resultatet under.`}
                         </p>
 
                         {!pendingGoalPlacement ? (
@@ -1288,7 +1499,7 @@ export function Stats() {
                                 <GoalVisualizer
                                     saves={[]}
                                     onAddSave={(x, y) => setPendingGoalPlacement({ x, y })}
-                                    teamName={activeTeamName}
+                                    teamName={pendingShot.teamName}
                                     type="goal"
                                     title="Plassering i mål"
                                 />

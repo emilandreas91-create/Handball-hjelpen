@@ -6,6 +6,7 @@ import {
     createEmptyTeamState,
     getPeriodLabel,
     normalizeHistory,
+    normalizeMatchEventData,
     normalizeTeamState,
     removeOrDecrementLocation,
     type MatchData,
@@ -16,6 +17,9 @@ import {
     type TeamState,
 } from '../lib/matchData';
 import { db } from '../lib/firebase';
+import { type CloudSyncState, prepareFirestorePayload, readScopedLocalStorage, removeScopedLocalStorage, writeScopedLocalStorage } from '../lib/persistence';
+
+type DraftRecoverySource = 'local' | 'cloud' | null;
 
 interface MatchContextType {
     matchTime: number;
@@ -38,7 +42,10 @@ interface MatchContextType {
     resetMatch: () => void;
     loadMatch: (data: MatchData) => void;
     draftRecovered: boolean;
+    draftRecoveredFrom: DraftRecoverySource;
     lastDraftSavedAt: number | null;
+    cloudSyncState: CloudSyncState;
+    lastCloudSyncAt: number | null;
     history: MatchEvent[];
 }
 
@@ -49,6 +56,25 @@ const LIVE_MATCH_REMOTE_DOC = 'liveMatchDraft';
 interface StoredLiveMatchDraft extends MatchData {
     updatedAt?: number;
 }
+
+const normalizeStoredLiveMatchDraft = (value: unknown): StoredLiveMatchDraft | null => {
+    if (typeof value !== 'object' || value === null) {
+        return null;
+    }
+
+    const source = value as Record<string, unknown>;
+    const parsedMatchTime = typeof source.matchTime === 'number' ? source.matchTime : Number(source.matchTime);
+    const parsedPeriod = typeof source.period === 'number' ? source.period : Number(source.period);
+
+    return {
+        matchTime: Number.isFinite(parsedMatchTime) ? Math.max(0, Math.round(parsedMatchTime)) : 0,
+        period: Number.isFinite(parsedPeriod) ? Math.max(1, Math.round(parsedPeriod)) : 1,
+        homeState: normalizeTeamState(source.homeState),
+        awayState: normalizeTeamState(source.awayState),
+        history: normalizeHistory(source.history),
+        updatedAt: typeof source.updatedAt === 'number' ? source.updatedAt : undefined,
+    };
+};
 
 export function MatchProvider({ children }: { children: React.ReactNode }) {
     const { currentUser } = useAuth();
@@ -64,7 +90,10 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [awayState, setAwayState] = useState<TeamState>(createEmptyTeamState());
     const [history, setHistory] = useState<MatchEvent[]>([]);
     const [draftRecovered, setDraftRecovered] = useState(false);
+    const [draftRecoveredFrom, setDraftRecoveredFrom] = useState<DraftRecoverySource>(null);
     const [lastDraftSavedAt, setLastDraftSavedAt] = useState<number | null>(null);
+    const [cloudSyncState, setCloudSyncState] = useState<CloudSyncState>('idle');
+    const [lastCloudSyncAt, setLastCloudSyncAt] = useState<number | null>(null);
     const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
     const [hasResolvedRemoteDraft, setHasResolvedRemoteDraft] = useState(false);
 
@@ -73,6 +102,8 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         type: StatType | string,
         data?: Record<string, number | string | boolean | null | undefined>,
     ) => {
+        const normalizedData = normalizeMatchEventData(data);
+
         setHistory((prev) => [
             ...prev,
             {
@@ -81,12 +112,12 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
                 period,
                 matchTime,
                 createdAt: new Date().toISOString(),
-                data,
+                data: normalizedData,
             },
         ]);
     };
 
-    const applyStoredDraft = (draft: StoredLiveMatchDraft, recovered: boolean) => {
+    const applyStoredDraft = (draft: StoredLiveMatchDraft, recovered: boolean, recoveredFrom: DraftRecoverySource) => {
         setMatchTime(Math.max(0, Math.round(draft.matchTime || 0)));
         setPeriod(Math.max(1, Math.round(draft.period || 1)));
         setHomeState(normalizeTeamState(draft.homeState, draft.homeState?.score));
@@ -94,8 +125,32 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         setHistory(normalizeHistory(draft.history));
         setIsRunning(false);
         setDraftRecovered(recovered);
+        setDraftRecoveredFrom(recovered ? recoveredFrom : null);
         setLastDraftSavedAt(typeof draft.updatedAt === 'number' ? draft.updatedAt : null);
     };
+
+    const resetDraftState = () => {
+        setMatchTime(0);
+        setIsRunning(false);
+        setPeriod(1);
+        setHomeState(createEmptyTeamState());
+        setAwayState(createEmptyTeamState());
+        setHistory([]);
+        setDraftRecovered(false);
+        setDraftRecoveredFrom(null);
+        setLastDraftSavedAt(null);
+        setCloudSyncState('idle');
+        setLastCloudSyncAt(null);
+    };
+
+    const buildCurrentDraft = (updatedAt: number): StoredLiveMatchDraft => ({
+        matchTime: Math.max(0, Math.round(matchTime)),
+        period: Math.max(1, Math.round(period)),
+        homeState: normalizeTeamState(homeState, homeState.score),
+        awayState: normalizeTeamState(awayState, awayState.score),
+        history: normalizeHistory(history),
+        updatedAt,
+    });
 
     useEffect(() => {
         lastDraftSavedAtRef.current = lastDraftSavedAt;
@@ -120,30 +175,40 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     }, [isRunning]);
 
     useEffect(() => {
+        if (remoteSyncTimeoutRef.current) {
+            clearTimeout(remoteSyncTimeoutRef.current);
+            remoteSyncTimeoutRef.current = null;
+        }
+
+        setHasHydratedDraft(false);
+        resetDraftState();
+
         if (typeof window === 'undefined') {
             setHasHydratedDraft(true);
             return;
         }
 
         try {
-            const rawDraft = window.localStorage.getItem(LIVE_MATCH_STORAGE_KEY);
-            if (!rawDraft) {
-                return;
+            const parsedDraft = readScopedLocalStorage(
+                LIVE_MATCH_STORAGE_KEY,
+                currentUser?.uid,
+                normalizeStoredLiveMatchDraft,
+            );
+            if (parsedDraft) {
+                applyStoredDraft(parsedDraft, true, 'local');
             }
-
-            const parsedDraft = JSON.parse(rawDraft) as StoredLiveMatchDraft;
-            applyStoredDraft(parsedDraft, true);
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokal kampkladd.', draftError);
-            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
+            removeScopedLocalStorage(LIVE_MATCH_STORAGE_KEY, currentUser?.uid);
         } finally {
             setHasHydratedDraft(true);
         }
-    }, []);
+    }, [currentUser?.uid]);
 
     useEffect(() => {
         if (!currentUser) {
             setHasResolvedRemoteDraft(true);
+            setCloudSyncState('idle');
             return;
         }
 
@@ -158,12 +223,22 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
                     return;
                 }
 
-                const remoteDraft = snapshot.data() as StoredLiveMatchDraft;
+                const remoteDraft = normalizeStoredLiveMatchDraft(snapshot.data());
+                if (!remoteDraft) {
+                    setHasResolvedRemoteDraft(true);
+                    return;
+                }
+
                 const remoteUpdatedAt = typeof remoteDraft.updatedAt === 'number' ? remoteDraft.updatedAt : 0;
                 const localUpdatedAt = lastDraftSavedAtRef.current ?? 0;
 
                 if (remoteUpdatedAt > localUpdatedAt) {
-                    applyStoredDraft(remoteDraft, true);
+                    applyStoredDraft(remoteDraft, true, 'cloud');
+                }
+
+                if (remoteUpdatedAt > 0) {
+                    setLastCloudSyncAt(remoteUpdatedAt);
+                    setCloudSyncState('synced');
                 }
 
                 setHasResolvedRemoteDraft(true);
@@ -198,8 +273,10 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         );
 
         if (!hasDraftContent) {
-            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
+            removeScopedLocalStorage(LIVE_MATCH_STORAGE_KEY, currentUser?.uid);
             setLastDraftSavedAt(null);
+            setCloudSyncState('idle');
+            setLastCloudSyncAt(null);
 
             if (currentUser && hasResolvedRemoteDraft) {
                 void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC)).catch((draftError) => {
@@ -211,16 +288,9 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         }
 
         const updatedAt = Date.now();
-        const nextDraft: StoredLiveMatchDraft = {
-            matchTime,
-            period,
-            homeState,
-            awayState,
-            history,
-            updatedAt,
-        };
+        const nextDraft = buildCurrentDraft(updatedAt);
 
-        window.localStorage.setItem(LIVE_MATCH_STORAGE_KEY, JSON.stringify(nextDraft));
+        writeScopedLocalStorage(LIVE_MATCH_STORAGE_KEY, currentUser?.uid, nextDraft);
         setLastDraftSavedAt(updatedAt);
 
         if (!currentUser || !hasResolvedRemoteDraft) {
@@ -231,9 +301,24 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         const elapsedSinceRemoteSync = Date.now() - lastRemoteSyncAtRef.current;
         const syncRemoteDraft = () => {
             lastRemoteSyncAtRef.current = Date.now();
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC), nextDraft).catch((draftError) => {
-                console.error('Kunne ikke synkronisere kampkladd til skyen.', draftError);
-            });
+            setCloudSyncState('saving');
+
+            const nextRemoteDraft = normalizeStoredLiveMatchDraft(prepareFirestorePayload(nextDraft));
+            if (!nextRemoteDraft) {
+                console.error('Ugyldig kampkladd ble stoppet før sky-synk.');
+                setCloudSyncState('error');
+                return;
+            }
+
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC), nextRemoteDraft)
+                .then(() => {
+                    setLastCloudSyncAt(updatedAt);
+                    setCloudSyncState('synced');
+                })
+                .catch((draftError) => {
+                    console.error('Kunne ikke synkronisere kampkladd til skyen.', draftError);
+                    setCloudSyncState('error');
+                });
         };
 
         if (elapsedSinceRemoteSync >= syncDelayMs) {
@@ -440,10 +525,13 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         setAwayState(createEmptyTeamState());
         setHistory([]);
         setDraftRecovered(false);
+        setDraftRecoveredFrom(null);
         setLastDraftSavedAt(null);
+        setCloudSyncState('idle');
+        setLastCloudSyncAt(null);
 
         if (typeof window !== 'undefined') {
-            window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
+            removeScopedLocalStorage(LIVE_MATCH_STORAGE_KEY, currentUser?.uid);
         }
     };
 
@@ -454,6 +542,8 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         setAwayState(normalizeTeamState(data.awayState, data.awayState?.score));
         setHistory(normalizeHistory(data.history));
         setIsRunning(false);
+        setDraftRecovered(false);
+        setDraftRecoveredFrom(null);
     };
 
     const value: MatchContextType = {
@@ -477,7 +567,10 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         resetMatch,
         loadMatch,
         draftRecovered,
+        draftRecoveredFrom,
         lastDraftSavedAt,
+        cloudSyncState,
+        lastCloudSyncAt,
         history,
     };
 
