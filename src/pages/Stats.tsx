@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { clsx } from 'clsx';
 import {
@@ -13,6 +14,7 @@ import {
     RotateCcw,
     Save as SaveIcon,
     Trash2,
+    Users,
     Wifi,
     WifiOff,
     X
@@ -35,6 +37,7 @@ import {
 } from '../lib/matchData';
 
 const LIVE_STATS_UI_KEY = 'handball-help-live-ui:v2';
+const LIVE_STATS_DEFAULTS_KEY = 'handball-help-live-defaults:v1';
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error';
 
@@ -44,6 +47,7 @@ interface FeedbackState {
 }
 
 export function Stats() {
+    const navigate = useNavigate();
     const {
         matchTime,
         isRunning,
@@ -80,10 +84,14 @@ export function Stats() {
     const [feedback, setFeedback] = useState<FeedbackState | null>(null);
     const [lastRemoteSaveAt, setLastRemoteSaveAt] = useState<number | null>(null);
     const [hasHydratedUiDraft, setHasHydratedUiDraft] = useState(false);
+    const [isMatchStarted, setIsMatchStarted] = useState(false);
+    const [showSetupPanel, setShowSetupPanel] = useState(false);
     const [editingButtonId, setEditingButtonId] = useState<string | null>(null);
     const [buttonLabelDraft, setButtonLabelDraft] = useState('');
     const [pendingDeleteButtonId, setPendingDeleteButtonId] = useState<string | null>(null);
     const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+    const [savedMatchName, setSavedMatchName] = useState('');
+    const [isSaveSuccessDialogOpen, setIsSaveSuccessDialogOpen] = useState(false);
 
     useEffect(() => {
         if (typeof window === 'undefined') {
@@ -94,6 +102,16 @@ export function Stats() {
         try {
             const rawDraft = window.localStorage.getItem(LIVE_STATS_UI_KEY);
             if (!rawDraft) {
+                const rawDefaults = window.localStorage.getItem(LIVE_STATS_DEFAULTS_KEY);
+                if (rawDefaults) {
+                    const parsedDefaults = JSON.parse(rawDefaults) as {
+                        homeTeamId?: string;
+                        awayTeamId?: string;
+                    };
+
+                    setHomeTeamId(typeof parsedDefaults.homeTeamId === 'string' ? parsedDefaults.homeTeamId : '');
+                    setAwayTeamId(typeof parsedDefaults.awayTeamId === 'string' ? parsedDefaults.awayTeamId : '');
+                }
                 return;
             }
 
@@ -102,6 +120,7 @@ export function Stats() {
                 homeTeamId?: string;
                 awayTeamId?: string;
                 matchName?: string;
+                isMatchStarted?: boolean;
                 customButtons?: { id: string; label: string; color: string }[];
             };
 
@@ -109,6 +128,7 @@ export function Stats() {
             setHomeTeamId(typeof parsedDraft.homeTeamId === 'string' ? parsedDraft.homeTeamId : '');
             setAwayTeamId(typeof parsedDraft.awayTeamId === 'string' ? parsedDraft.awayTeamId : '');
             setMatchName(typeof parsedDraft.matchName === 'string' ? parsedDraft.matchName : '');
+            setIsMatchStarted(Boolean(parsedDraft.isMatchStarted));
             setCustomButtons(Array.isArray(parsedDraft.customButtons) ? parsedDraft.customButtons : []);
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokalt kampoppsett.', draftError);
@@ -128,6 +148,7 @@ export function Stats() {
             Boolean(homeTeamId) ||
             Boolean(awayTeamId) ||
             Boolean(matchName) ||
+            isMatchStarted ||
             customButtons.length > 0
         );
 
@@ -141,9 +162,26 @@ export function Stats() {
             homeTeamId,
             awayTeamId,
             matchName,
+            isMatchStarted,
             customButtons,
         }));
-    }, [activeSide, awayTeamId, customButtons, hasHydratedUiDraft, homeTeamId, matchName]);
+    }, [activeSide, awayTeamId, customButtons, hasHydratedUiDraft, homeTeamId, isMatchStarted, matchName]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        if (!homeTeamId && !awayTeamId) {
+            return;
+        }
+
+        window.localStorage.setItem(LIVE_STATS_DEFAULTS_KEY, JSON.stringify({
+            homeTeamId,
+            awayTeamId,
+            updatedAt: Date.now(),
+        }));
+    }, [awayTeamId, homeTeamId]);
 
     useEffect(() => {
         if (!feedback || feedback.type === 'error' || feedback.type === 'warning') {
@@ -329,6 +367,15 @@ export function Stats() {
     }, [awayTeamId, customButtons, homeTeamId, lastAction]);
 
     const sameTeamsSelected = homeTeamId && awayTeamId && homeTeamId === awayTeamId;
+    const hasLiveMatchContent = (
+        matchTime > 0 ||
+        history.length > 0 ||
+        homeState.score > 0 ||
+        awayState.score > 0 ||
+        homeState.shotLocations.length > 0 ||
+        awayState.shotLocations.length > 0
+    );
+    const isLivePhase = isMatchStarted || hasLiveMatchContent;
     const canSaveMatch = Boolean(currentUser) && !sameTeamsSelected && !pendingShot && isOnline && saveState !== 'saving';
     const hasSavedToCloud = lastRemoteSaveAt !== null;
     const hasUnsavedChangesSinceSave = Boolean(
@@ -388,6 +435,23 @@ export function Stats() {
         }
     }, [hasUnsavedChangesSinceSave, saveState]);
 
+    const handleStartMatch = () => {
+        if (sameTeamsSelected) {
+            setFeedback({
+                type: 'warning',
+                message: 'Velg ulike lag på hjemme- og bortesiden før du starter kampen.'
+            });
+            return;
+        }
+
+        setIsMatchStarted(true);
+        setShowSetupPanel(false);
+        setFeedback({
+            type: 'info',
+            message: hasLiveMatchContent ? 'Fortsetter siste kamp.' : 'Kampen er klar for live-registrering.'
+        });
+    };
+
     const handleSaveMatch = async () => {
         const name = matchName.trim() || defaultMatchName;
         if (!currentUser) {
@@ -442,6 +506,8 @@ export function Stats() {
 
             setSaveState('success');
             setLastRemoteSaveAt(Date.now());
+            setSavedMatchName(name);
+            setIsSaveSuccessDialogOpen(true);
             setFeedback({
                 type: 'success',
                 message: `Kampen ble lagret som "${name}".`
@@ -458,11 +524,15 @@ export function Stats() {
 
     const handleResetMatch = () => {
         resetMatch();
+        setIsMatchStarted(false);
+        setShowSetupPanel(false);
         setMatchName('');
         setPendingShot(null);
         setPendingGoalPlacement(null);
         setSaveState('idle');
         setLastRemoteSaveAt(null);
+        setSavedMatchName('');
+        setIsSaveSuccessDialogOpen(false);
         setIsResetDialogOpen(false);
         setFeedback({
             type: 'info',
@@ -489,6 +559,132 @@ export function Stats() {
         );
     };
 
+    if (!isLivePhase) {
+        return (
+            <div className="mx-auto max-w-4xl pb-28 sm:pb-0">
+                <div className="mb-4 space-y-3">
+                    {teamsLoading ? (
+                        <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-gray-200">
+                            <Loader2 size={18} className="animate-spin text-primary" />
+                            Henter lag og klargjør kampoppsettet...
+                        </div>
+                    ) : null}
+                    {!isOnline ? renderFeedback({
+                        type: 'warning',
+                        message: 'Offline. Du kan fortsatt forberede oppsettet før kamp.'
+                    }) : null}
+                    {error ? renderFeedback({ type: 'error', message: error }) : null}
+                    {sameTeamsSelected ? renderFeedback({
+                        type: 'warning',
+                        message: 'Velg ulike lag på hjemme- og bortesiden før du starter.'
+                    }) : null}
+                    {feedback ? renderFeedback(feedback) : null}
+                </div>
+
+                <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
+                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">Live kamp</p>
+                    <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
+                        Klargjør kampen
+                    </h1>
+                    <p className="mt-3 text-base text-gray-300">Velg lag og start når du er klar.</p>
+
+                    <div className="mt-6 grid gap-4 md:grid-cols-2">
+                        <label className="block">
+                            <span className="mb-2 block text-sm font-semibold text-white">Hjemmelag</span>
+                            <select
+                                className="min-h-[56px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-white focus:outline-none focus:ring-1 focus:ring-primary"
+                                value={homeTeamId}
+                                onChange={(e) => setHomeTeamId(e.target.value)}
+                            >
+                                <option value="Hjemme">Hjemme</option>
+                                {teams.map((team) => (
+                                    <option key={team.id} value={team.name}>
+                                        {team.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-2 block text-sm font-semibold text-white">Bortelag</span>
+                            <select
+                                className="min-h-[56px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-white focus:outline-none focus:ring-1 focus:ring-secondary"
+                                value={awayTeamId}
+                                onChange={(e) => setAwayTeamId(e.target.value)}
+                            >
+                                <option value="Borte">Borte</option>
+                                {teams.map((team) => (
+                                    <option key={team.id} value={team.name}>
+                                        {team.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="mt-4">
+                        <label htmlFor="match-name-setup" className="mb-2 block text-sm font-semibold text-white">
+                            Kampnavn
+                        </label>
+                        <input
+                            id="match-name-setup"
+                            type="text"
+                            value={matchName}
+                            onChange={(e) => setMatchName(e.target.value)}
+                            placeholder={defaultMatchName}
+                            className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-white transition-all focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                        <p className="mt-2 text-xs text-gray-500">
+                            Tomt felt lagrer automatisk som "{defaultMatchName}".
+                        </p>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 md:grid-cols-3">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Lagvalg</p>
+                            <p className="mt-2 text-sm font-semibold text-white">
+                                {homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}
+                            </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Knapper</p>
+                            <p className="mt-2 text-sm font-semibold text-white">{customButtons.length} egendefinerte</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Status</p>
+                            <p className="mt-2 text-sm font-semibold text-white">{isOnline ? 'Klar til start' : 'Forbereder offline'}</p>
+                        </div>
+                    </div>
+
+                    <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                        <button
+                            type="button"
+                            onClick={handleStartMatch}
+                            className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-bold text-black transition hover:bg-white"
+                        >
+                            <Play size={18} />
+                            Start kamp
+                        </button>
+                        <Link
+                            to="/teams"
+                            className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            <Users size={18} />
+                            Åpne lag
+                        </Link>
+                        <Link
+                            to="/tactics"
+                            className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            <Info size={18} />
+                            Taktikk
+                        </Link>
+                    </div>
+                </section>
+            </div>
+        );
+    }
+
     return (
         <div className="mx-auto max-w-4xl pb-28 sm:pb-0">
             <div className="mb-4 space-y-3">
@@ -502,12 +698,60 @@ export function Stats() {
                     type: 'warning',
                     message: 'Offline. Kampen fortsetter lokalt og kan lagres til laghistorikken når nettet er tilbake.'
                 }) : null}
+                {draftRecovered && hasLiveMatchContent ? renderFeedback({
+                    type: 'info',
+                    message: formattedDraftTime
+                        ? `Siste kamp er gjenopptatt fra lokal kladd kl. ${formattedDraftTime}.`
+                        : 'Siste kamp er gjenopptatt fra lokal kladd.'
+                }) : null}
                 {error ? renderFeedback({ type: 'error', message: error }) : null}
                 {sameTeamsSelected ? renderFeedback({
                     type: 'warning',
                     message: 'Velg ulike lag på hjemme- og bortesiden før du lagrer.'
                 }) : null}
                 {feedback ? renderFeedback(feedback) : null}
+            </div>
+
+            <div className="mb-4 rounded-3xl border border-white/10 bg-card/70 p-4 shadow-xl">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Pågående kamp</p>
+                        <h2 className="mt-2 text-xl font-bold text-white">{matchName.trim() || defaultMatchName}</h2>
+                        <p className="mt-1 text-sm text-gray-400">
+                            {homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}
+                        </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                        <button
+                            type="button"
+                            onClick={() => setShowSetupPanel((value) => !value)}
+                            className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            <Info size={16} />
+                            {showSetupPanel ? 'Skjul oppsett' : 'Kampoppsett'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsEditMode((value) => !value)}
+                            className={clsx(
+                                'flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-colors',
+                                isEditMode ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20',
+                            )}
+                        >
+                            <Edit2 size={16} />
+                            {isEditMode ? 'Ferdig' : 'Rediger knapper'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsResetDialogOpen(true)}
+                            className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            <RefreshCcw size={16} />
+                            Ny kamp
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div className="mb-4 grid grid-cols-2 gap-2 sm:hidden">
@@ -651,6 +895,7 @@ export function Stats() {
                 </button>
             </div>
 
+            {showSetupPanel ? (
             <div className="mb-4 rounded-3xl border border-white/10 bg-card/70 p-4 shadow-xl">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
                     <div className="flex-1">
@@ -712,6 +957,7 @@ export function Stats() {
                     </div>
                 </div>
             </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-4 md:gap-6 lg:grid-cols-4">
                 <div className="col-span-2 mb-4 flex justify-center">
@@ -909,6 +1155,46 @@ export function Stats() {
                     </div>
                 </div>
             ) : null}
+
+            <Dialog
+                isOpen={isSaveSuccessDialogOpen}
+                title="Kampen er lagret"
+                description={savedMatchName
+                    ? `"${savedMatchName}" er lagret i laghistorikken. Hva vil du gjøre nå?`
+                    : 'Kampen er lagret i laghistorikken. Hva vil du gjøre nå?'}
+                onClose={() => setIsSaveSuccessDialogOpen(false)}
+                actions={
+                    <>
+                        <button
+                            type="button"
+                            onClick={() => setIsSaveSuccessDialogOpen(false)}
+                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            Fortsett kampen
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsSaveSuccessDialogOpen(false);
+                                handleResetMatch();
+                            }}
+                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                        >
+                            Ny kamp
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsSaveSuccessDialogOpen(false);
+                                navigate('/teams');
+                            }}
+                            className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white"
+                        >
+                            Åpne lag
+                        </button>
+                    </>
+                }
+            />
 
             <Dialog
                 isOpen={Boolean(editingButton)}

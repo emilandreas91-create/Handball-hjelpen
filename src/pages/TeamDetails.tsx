@@ -22,9 +22,18 @@ import {
     formatMatchTimeLabel,
     getShootingPercentage,
     resolveMatchTeamSide,
+    createEmptyTeamState,
+    buildStoredMatchDocument,
+    normalizeTeamNameKey,
     type MatchEvent,
     type StoredTeamStats,
 } from '../lib/matchData';
+import { fetchAndParseIcal } from '../lib/icalParser';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { useAuth } from '../components/features/useAuth';
+import { X, CalendarPlus, CheckCircle2 } from 'lucide-react';
+
 
 type ViewMode = 'general' | 'goalkeeper';
 type CourtZoneKey = '6m' | '9m' | 'Kant';
@@ -61,10 +70,160 @@ function TrendCard({ label, value, helper, trendIcon, accentClassName }: TrendCa
     );
 }
 
+interface ImportModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    team: { id: string; name: string; aliases?: string[] };
+}
+
+function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
+    const [url, setUrl] = useState('');
+    const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+    const [errorMsg, setErrorMsg] = useState('');
+    const [importedCount, setImportedCount] = useState(0);
+    const { currentUser } = useAuth();
+
+    if (!isOpen) return null;
+
+    const handleImport = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!url || !currentUser) return;
+
+        setStatus('loading');
+        setErrorMsg('');
+
+        try {
+            const parsedMatches = await fetchAndParseIcal(url);
+
+            if (parsedMatches.length === 0) {
+                setStatus('error');
+                setErrorMsg('Fant ingen kamper i denne kalenderen. Sikker på at linken er riktig?');
+                return;
+            }
+
+            const teamLookupNames = new Set([
+                normalizeTeamNameKey(team.name),
+                ...(team.aliases || []).map(normalizeTeamNameKey)
+            ]);
+
+            const promises = parsedMatches.map(async (pm) => {
+                // Sjekk om laget vårt er oppført som hjemme- eller bortelag
+                const normHome = normalizeTeamNameKey(pm.homeTeam);
+                const isHome = teamLookupNames.has(normHome);
+
+                const matchDoc = buildStoredMatchDocument({
+                    name: `${pm.homeTeam} - ${pm.awayTeam}`,
+                    date: pm.date ? new Date(pm.date) : new Date(),
+                    savedAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                    matchTime: 0,
+                    period: 1,
+                    periodLabel: '1. OMG',
+                    homeTeam: { id: isHome ? team.id : null, name: pm.homeTeam },
+                    awayTeam: { id: !isHome ? team.id : null, name: pm.awayTeam },
+                    homeState: createEmptyTeamState(),
+                    awayState: createEmptyTeamState(),
+                    history: [],
+                    customDefinitions: []
+                });
+
+                // Tving status til 'saved'
+                matchDoc.status = 'saved';
+
+                await addDoc(collection(db, 'users', currentUser.uid, 'matches'), matchDoc);
+            });
+
+            await Promise.all(promises);
+            setImportedCount(parsedMatches.length);
+            setStatus('success');
+
+        } catch (err: unknown) {
+            setStatus('error');
+            setErrorMsg(err instanceof Error ? err.message : 'Klarte ikke importere terminlisten.');
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+            <div className="relative w-full max-w-lg rounded-3xl border border-white/10 bg-gray-900 p-6 shadow-2xl sm:p-8">
+                <button
+                    onClick={onClose}
+                    className="absolute right-6 top-6 text-gray-400 transition hover:text-white"
+                >
+                    <X size={24} />
+                </button>
+
+                {status === 'success' ? (
+                    <div className="flex flex-col items-center py-6 text-center">
+                        <div className="mb-5 inline-flex rounded-full bg-green-500/20 p-4">
+                            <CheckCircle2 size={48} className="text-green-500" />
+                        </div>
+                        <h3 className="text-2xl font-black text-white">Import fullført!</h3>
+                        <p className="mt-3 text-gray-400">
+                            Vi la til {importedCount} kamper fra kalenderen. De ligger nå klare i listen.
+                        </p>
+                        <button
+                            onClick={onClose}
+                            className="mt-8 w-full rounded-2xl bg-white/10 px-6 py-4 font-bold text-white transition hover:bg-white/20"
+                        >
+                            Flott, lukk vinduet
+                        </button>
+                    </div>
+                ) : (
+                    <>
+                        <h2 className="text-2xl font-black text-white">Importer Terminliste</h2>
+                        <p className="mt-2 text-sm text-gray-400">
+                            Lim inn linken til iCal (<span className="text-gray-300">.ics</span>)-filen fra lagets side på handball.no. Da legges sesongen inn automatisk.
+                        </p>
+
+                        <form onSubmit={handleImport} className="mt-6 flex flex-col gap-4">
+                            <div>
+                                <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">
+                                    Kalender-link (Abonner på kalender)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={url}
+                                    onChange={(e) => setUrl(e.target.value)}
+                                    placeholder="https://www.handball.no/system/ical/?teamid=..."
+                                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white placeholder-gray-600 transition focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                                    required
+                                />
+                            </div>
+
+                            {status === 'error' && (
+                                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
+                                    {errorMsg}
+                                </div>
+                            )}
+
+                            <button
+                                type="submit"
+                                disabled={status === 'loading'}
+                                className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-4 font-bold text-black transition hover:bg-white disabled:opacity-50"
+                            >
+                                {status === 'loading' ? (
+                                    'Importerer kamper...'
+                                ) : (
+                                    <>
+                                        <CalendarPlus size={20} />
+                                        Hent fra iCal
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export function TeamDetails() {
     const { teamId } = useParams<{ teamId: string }>();
     const { teams, loading: teamsLoading, error: teamsError } = useTeams();
     const [viewMode, setViewMode] = useState<ViewMode>('general');
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
     const team = teams.find((entry) => entry.id === teamId);
     const { matches, loading: matchesLoading, error: matchesError } = useTeamMatches({
@@ -313,14 +472,24 @@ export function TeamDetails() {
                         </div>
                     </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         <div className="rounded-3xl border border-white/10 bg-black/20 p-5">
                             <p className="text-sm text-gray-400">Registrerte kamper</p>
                             <p className="mt-2 text-3xl font-black text-white">{matches.length}</p>
                         </div>
+                        <button
+                            onClick={() => setIsImportModalOpen(true)}
+                            className="flex flex-col justify-center rounded-3xl border border-white/10 bg-black/20 p-5 text-left text-white transition hover:border-gray-500 hover:bg-white/5"
+                        >
+                            <p className="text-sm text-gray-400">Verktøy</p>
+                            <div className="mt-2 flex items-center justify-between">
+                                <span className="text-lg font-bold">Importer Terminliste</span>
+                                <CalendarPlus className="text-gray-400" size={20} />
+                            </div>
+                        </button>
                         <Link
                             to="/stats"
-                            className="flex items-center justify-between rounded-3xl border border-primary/30 bg-primary/10 p-5 text-white transition hover:border-primary hover:bg-primary/15"
+                            className="flex items-center justify-between rounded-3xl border border-primary/30 bg-primary/10 p-5 text-white transition hover:border-primary hover:bg-primary/15 lg:col-start-3"
                         >
                             <div>
                                 <p className="text-sm text-primary">Neste steg</p>
@@ -331,6 +500,12 @@ export function TeamDetails() {
                     </div>
                 </div>
             </section>
+
+            <ImportScheduleModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                team={team}
+            />
 
             {(teamsError || matchesError) ? (
                 <div className="flex items-start gap-3 rounded-3xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-200">
@@ -593,7 +768,11 @@ export function TeamDetails() {
                                     </p>
                                 </div>
                                 <div className="rounded-2xl border border-white/10 bg-black/40 px-5 py-3 text-2xl font-black tracking-widest text-white">
-                                    {match.homeScore} - {match.awayScore}
+                                    {match.status === 'saved' && match.historyCount === 0 ? (
+                                        <span className="text-gray-500 text-lg">VS</span>
+                                    ) : (
+                                        `${match.homeScore} - ${match.awayScore}`
+                                    )}
                                 </div>
                             </article>
                         ))}

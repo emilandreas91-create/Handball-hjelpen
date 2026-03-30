@@ -3,12 +3,23 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Activity, ArrowRight, LogIn, Menu, Play, Users, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '../features/useAuth';
+import { useMatchContext } from '../../hooks/useMatch';
 
 export function Navbar() {
     const { currentUser, logout } = useAuth();
+    const { matchTime, history, homeState, awayState } = useMatchContext();
     const location = useLocation();
     const navigate = useNavigate();
     const [isOpen, setIsOpen] = useState(false);
+    const hasLiveDraft = (
+        matchTime > 0 ||
+        history.length > 0 ||
+        homeState.score > 0 ||
+        awayState.score > 0 ||
+        homeState.shotLocations.length > 0 ||
+        awayState.shotLocations.length > 0
+    );
+    const primaryMatchCtaLabel = hasLiveDraft ? 'Fortsett kamp' : 'Ny kamp';
 
     const handleLogout = async () => {
         await logout();
@@ -26,7 +37,7 @@ export function Navbar() {
 
     const navLinks = currentUser
         ? [
-            { path: '/', label: 'Oversikt' },
+            { path: '/start', label: 'Forside' },
             { path: '/stats', label: 'Live kamp', icon: Activity },
             { path: '/tactics', label: 'Taktikk', icon: Play },
             { path: '/teams', label: 'Lag', icon: Users },
@@ -43,7 +54,7 @@ export function Navbar() {
     return (
         <nav className="sticky top-0 z-50 w-full border-b border-white/10 bg-black/75 backdrop-blur-xl">
             <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-3 py-3 sm:px-4 md:gap-6 md:px-6">
-                <Link to="/" className="min-w-0">
+                <Link to={currentUser ? '/start' : '/'} className="min-w-0">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.35em] text-primary/80">
                         Handball-hjelpen
                     </div>
@@ -75,7 +86,7 @@ export function Navbar() {
                                 to="/stats"
                                 className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-bold text-black transition hover:bg-white"
                             >
-                                Start kamp
+                                {primaryMatchCtaLabel}
                                 <ArrowRight size={16} />
                             </Link>
                             <button
@@ -150,7 +161,7 @@ export function Navbar() {
                                     onClick={() => setIsOpen(false)}
                                     className="flex items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 font-bold text-black"
                                 >
-                                    Start kamp
+                                    {primaryMatchCtaLabel}
                                     <ArrowRight size={18} />
                                 </Link>
                                 <button
