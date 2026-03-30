@@ -1,6 +1,5 @@
 // src/lib/nhfImport.ts
-// Henter terminlisten fra Håndballforbundets "Åpne i Excel"-link
-// og parser HTML-tabellen (den returnerer en HTML-tabell, ikke en ekte .xls-fil).
+// Parser terminliste-data som brukeren kopierer fra handball.no (lim inn tekst).
 
 export interface ParsedMatch {
     date: string;
@@ -8,104 +7,75 @@ export interface ParsedMatch {
     venue: string;
     homeTeam: string;
     awayTeam: string;
-    result: string; // "H-B" fra tabellen, f.eks "30-19" eller tom streng
+    result: string;
 }
 
 /**
- * Konverterer en lag-side URL til Excel-eksport URL.
- * Input:  https://www.handball.no/system/kamper/lag/?lagid=821405
- * Output: https://www.handball.no/AjaxData/TerminlisteLag?id=821405
+ * Parser terminliste-tekst som er kopiert og limt inn fra handball.no.
+ * Formatet fra handball.no sin tabell er linjeskilt med kolonnene:
+ * Tid | Kampnr | Bane | Hjemmelag | Bortelag | H-B
+ *
+ * Tekst-kopier fra nettsiden gir tab-separerte kolonner, eller
+ * det kan komme som mellomrom-separert tekst med dato-mønster som anker.
  */
-export function buildExcelUrl(lagUrl: string): string {
-    const lagidMatch = lagUrl.match(/lagid=(\d+)/i);
-    if (!lagidMatch) {
-        throw new Error('Kunne ikke finne lag-ID fra lenken. Sørg for at den inneholder "lagid=XXXXX".');
-    }
-    return `https://www.handball.no/AjaxData/TerminlisteLag?id=${lagidMatch[1]}`;
-}
-
-/**
- * Henter terminlisten fra NHF via Excel-URL-en (som returnerer HTML-tabell)
- * og parser ut kampene.
- */
-export async function fetchAndParseSchedule(lagUrl: string): Promise<ParsedMatch[]> {
-    if (!lagUrl) throw new Error('URL mangler.');
-
-    // Godta enten lag-side-URL eller direkte Excel-URL
-    let excelUrl: string;
-    if (lagUrl.includes('AjaxData/TerminlisteLag')) {
-        excelUrl = lagUrl;
-    } else if (lagUrl.includes('lagid=')) {
-        excelUrl = buildExcelUrl(lagUrl);
-    } else {
-        throw new Error('Ugyldig lenke. Lim inn lagets side fra handball.no (den som inneholder "lagid=").');
+export function parseScheduleText(text: string): ParsedMatch[] {
+    if (!text || !text.trim()) {
+        throw new Error('Ingen tekst å importere. Kopier terminlisten fra handball.no og lim inn her.');
     }
 
-    try {
-        // Bruk allorigins proxy for å omgå CORS
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(excelUrl)}`;
-        const res = await fetch(proxyUrl);
+    const lines = text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
 
-        if (!res.ok) {
-            throw new Error(`Klarte ikke koble til handball.no (Status: ${res.status})`);
-        }
-
-        const htmlText = await res.text();
-
-        if (!htmlText.includes('<table') && !htmlText.includes('<tr')) {
-            throw new Error('Svaret fra handball.no inneholdt ingen terminliste-tabell. Sjekk at lenken er riktig.');
-        }
-
-        return parseHtmlTable(htmlText);
-    } catch (err: any) {
-        console.error('NHF Import Error:', err);
-        throw new Error(err.message || 'En ukjent feil oppstod ved henting av terminlisten.');
-    }
-}
-
-/**
- * Parser en HTML-tabell som NHF returnerer fra "Åpne i Excel"-endepunktet.
- * Kolonnene er: Tid | Kampnr | Bane | Hjemmelag | Bortelag | H-B
- */
-function parseHtmlTable(html: string): ParsedMatch[] {
     const matches: ParsedMatch[] = [];
 
-    // Bruk DOMParser i nettleseren for å trygt parse HTML
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const rows = doc.querySelectorAll('tr');
+    // Mønster for dato+tid: "06.09.25 13:30" eller "06.09.2025 13:30"
+    const datePattern = /^(\d{2})\.(\d{2})\.(\d{2,4})\s+(\d{2}):(\d{2})/;
 
-    for (let i = 0; i < rows.length; i++) {
-        const cells = rows[i].querySelectorAll('td');
-        if (cells.length < 5) continue; // Hopp over header-rader og tomme rader
+    for (const line of lines) {
+        // Sjekk om linjen starter med et dato-mønster
+        const dateMatch = line.match(datePattern);
+        if (!dateMatch) continue;
 
-        const tidRaw = cells[0]?.textContent?.trim() || '';
-        const kampnr = cells[1]?.textContent?.trim() || '';
-        const bane = cells[2]?.textContent?.trim() || '';
-        const hjemmelag = cells[3]?.textContent?.trim() || '';
-        const bortelag = cells[4]?.textContent?.trim() || '';
-        const resultat = cells[5]?.textContent?.trim() || '';
+        // Prøv å splitte på tabs først (standard kopier-fra-nettside)
+        let parts = line.split('\t').map((p) => p.trim());
+
+        // Hvis det ikke er nok tab-separerte deler, prøv å parse linje-mønsteret
+        if (parts.length < 5) {
+            parts = splitLineIntelligently(line);
+        }
+
+        if (parts.length < 5) continue;
+
+        // Kolonner: Tid, Kampnr, Bane, Hjemmelag, Bortelag, [H-B]
+        const tidRaw = parts[0];
+        const kampnr = parts[1] || '';
+        const bane = parts[2] || '';
+        const hjemmelag = parts[3] || '';
+        const bortelag = parts[4] || '';
+        const resultat = parts[5] || '';
 
         if (!hjemmelag || !bortelag) continue;
 
-        // Parse dato: "06.09.25 13:30" → ISO string
+        // Parse dato
         let dateIso = new Date().toISOString();
         try {
-            const dateMatch = tidRaw.match(/(\d{2})\.(\d{2})\.(\d{2,4})\s*(\d{2}):(\d{2})/);
-            if (dateMatch) {
-                const day = parseInt(dateMatch[1]);
-                const month = parseInt(dateMatch[2]) - 1;
-                let year = parseInt(dateMatch[3]);
-                if (year < 100) year += 2000; // 25 → 2025
-                const hour = parseInt(dateMatch[4]);
-                const minute = parseInt(dateMatch[5]);
+            const dm = tidRaw.match(datePattern);
+            if (dm) {
+                const day = parseInt(dm[1]);
+                const month = parseInt(dm[2]) - 1;
+                let year = parseInt(dm[3]);
+                if (year < 100) year += 2000;
+                const hour = parseInt(dm[4]);
+                const minute = parseInt(dm[5]);
                 const dateObj = new Date(year, month, day, hour, minute);
                 if (!isNaN(dateObj.getTime())) {
                     dateIso = dateObj.toISOString();
                 }
             }
         } catch {
-            // Fallback til nå-tid
+            // Fallback
         }
 
         matches.push({
@@ -119,4 +89,46 @@ function parseHtmlTable(html: string): ParsedMatch[] {
     }
 
     return matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
+/**
+ * Forsøker å splitte en linje som ikke er tab-separert.
+ * Vi bruker kampnummer-mønsteret (langt tall) som anker.
+ */
+function splitLineIntelligently(line: string): string[] {
+    // Dato+tid-del
+    const dateMatch = line.match(/^(\d{2}\.\d{2}\.\d{2,4}\s+\d{2}:\d{2})\s+/);
+    if (!dateMatch) return [line];
+
+    const tid = dateMatch[1];
+    const rest = line.slice(dateMatch[0].length);
+
+    // Kampnummer er et langt tall (8+ sifre)
+    const kampnrMatch = rest.match(/^(\d{5,})\s+/);
+    if (!kampnrMatch) {
+        // Ingen kampnummer, prøv å splitte resten med to eller flere mellomrom
+        const remainingParts = rest.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+        return [tid, '', ...remainingParts];
+    }
+
+    const kampnr = kampnrMatch[1];
+    const afterKampnr = rest.slice(kampnrMatch[0].length);
+
+    // Resten av linja inneholder: Bane, Hjemmelag, Bortelag, [Resultat]
+    // Disse er separert med to+ mellomrom, eller med kjente mønster som resultat (tall-tall)
+    const resultMatch = afterKampnr.match(/\s+(\d{1,3}-\d{1,3})\s*$/);
+    const resultat = resultMatch ? resultMatch[1] : '';
+    const beforeResult = resultMatch ? afterKampnr.slice(0, -resultMatch[0].length) : afterKampnr;
+
+    //Split de gjenværende feltene på 2+ mellomrom
+    const fields = beforeResult.split(/\s{2,}/).map((s) => s.trim()).filter(Boolean);
+
+    if (fields.length >= 3) {
+        return [tid, kampnr, fields[0], fields[1], fields[2], resultat];
+    }
+    if (fields.length === 2) {
+        return [tid, kampnr, '', fields[0], fields[1], resultat];
+    }
+
+    return [tid, kampnr, ...fields, resultat];
 }
