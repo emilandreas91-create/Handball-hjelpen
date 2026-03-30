@@ -28,11 +28,11 @@ import {
     type MatchEvent,
     type StoredTeamStats,
 } from '../lib/matchData';
-import { fetchAndParseIcal } from '../lib/icalParser';
+import { fetchAndParseSchedule } from '../lib/icalParser';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/useAuth';
-import { X, CalendarPlus, CheckCircle2 } from 'lucide-react';
+import { X, CalendarPlus, CheckCircle2, ExternalLink, ChevronRight } from 'lucide-react';
 
 
 type ViewMode = 'general' | 'goalkeeper';
@@ -81,6 +81,7 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
     const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
     const [importedCount, setImportedCount] = useState(0);
+    const [showGuide, setShowGuide] = useState(false);
     const { currentUser } = useAuth();
 
     if (!isOpen) return null;
@@ -93,11 +94,11 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
         setErrorMsg('');
 
         try {
-            const parsedMatches = await fetchAndParseIcal(url);
+            const parsedMatches = await fetchAndParseSchedule(url);
 
             if (parsedMatches.length === 0) {
                 setStatus('error');
-                setErrorMsg('Fant ingen kamper i denne kalenderen. Sikker på at linken er riktig?');
+                setErrorMsg('Fant ingen kamper i terminlisten. Sjekk at linken er riktig og at laget har registrerte kamper.');
                 return;
             }
 
@@ -107,7 +108,6 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
             ]);
 
             const promises = parsedMatches.map(async (pm) => {
-                // Sjekk om laget vårt er oppført som hjemme- eller bortelag
                 const normHome = normalizeTeamNameKey(pm.homeTeam);
                 const isHome = teamLookupNames.has(normHome);
 
@@ -127,7 +127,6 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                     customDefinitions: []
                 });
 
-                // Tving status til 'saved'
                 matchDoc.status = 'saved';
 
                 await addDoc(collection(db, 'users', currentUser.uid, 'matches'), matchDoc);
@@ -145,10 +144,10 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
-            <div className="relative w-full max-w-lg rounded-3xl border border-white/10 bg-gray-900 p-6 shadow-2xl sm:p-8">
+            <div className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-gray-900 p-6 shadow-2xl sm:p-8">
                 <button
                     onClick={onClose}
-                    className="absolute right-6 top-6 text-gray-400 transition hover:text-white"
+                    className="absolute right-6 top-6 z-10 text-gray-400 transition hover:text-white"
                 >
                     <X size={24} />
                 </button>
@@ -160,7 +159,10 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                         </div>
                         <h3 className="text-2xl font-black text-white">Import fullført!</h3>
                         <p className="mt-3 text-gray-400">
-                            Vi la til {importedCount} kamper fra kalenderen. De ligger nå klare i listen.
+                            {importedCount} kamper ble hentet fra handball.no og lagt til i listen din.
+                        </p>
+                        <p className="mt-2 text-xs text-gray-500">
+                            Kampene ligger nå klare. Du kan starte live-registrering, eller legge inn resultat i ettertid.
                         </p>
                         <button
                             onClick={onClose}
@@ -172,23 +174,90 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                 ) : (
                     <>
                         <h2 className="text-2xl font-black text-white">Importer Terminliste</h2>
-                        <p className="mt-2 text-sm text-gray-400">
-                            Lim inn linken til iCal (<span className="text-gray-300">.ics</span>)-filen fra lagets side på handball.no. Da legges sesongen inn automatisk.
+                        <p className="mt-2 text-sm leading-relaxed text-gray-400">
+                            Hent hele sesongens kampoppsett direkte fra Håndballforbundets nettsider.  
+                            Lim inn lagets nettadresse fra <span className="font-semibold text-gray-300">handball.no</span>, så importerer vi alle kampene automatisk.
                         </p>
+
+                        {/* Steg-for-steg guide */}
+                        <button
+                            type="button"
+                            onClick={() => setShowGuide(!showGuide)}
+                            className="mt-4 flex w-full items-center gap-2 text-left text-sm font-semibold text-primary transition hover:text-white"
+                        >
+                            <ChevronRight size={16} className={`transition-transform ${showGuide ? 'rotate-90' : ''}`} />
+                            {showGuide ? 'Skjul veiledning' : 'Hvor finner jeg lenken? (Vis veiledning)'}
+                        </button>
+
+                        {showGuide && (
+                            <div className="mt-3 space-y-4 rounded-2xl border border-white/5 bg-white/5 p-5">
+                                <div className="flex gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">1</div>
+                                    <div>
+                                        <p className="font-bold text-white">Gå til handball.no</p>
+                                        <p className="mt-1 text-sm text-gray-400">
+                                            Åpne <a href="https://www.handball.no/system/kamper/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-white">Kampsøk på handball.no</a> i en ny fane.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">2</div>
+                                    <div>
+                                        <p className="font-bold text-white">Søk opp klubben din</p>
+                                        <p className="mt-1 text-sm text-gray-400">
+                                            Skriv inn klubbnavnet (f.eks. «{team.name.split(' ')[0] || 'Bjarg'}») i søkefeltet og trykk Søk.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">3</div>
+                                    <div>
+                                        <p className="font-bold text-white">Velg riktig lag</p>
+                                        <p className="mt-1 text-sm text-gray-400">
+                                            Trykk deg inn på klubben, og finn riktig lag i listen (f.eks. «{team.name}»). Du skal nå se lagets terminliste med alle kampene.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">4</div>
+                                    <div>
+                                        <p className="font-bold text-white">Kopier nettadressen</p>
+                                        <p className="mt-1 text-sm text-gray-400">
+                                            Kopier hele <span className="font-semibold text-gray-300">nettadressen fra adressefeltet</span> i nettleseren din. Den ser omtrent slik ut:
+                                        </p>
+                                        <p className="mt-2 rounded-lg bg-black/40 px-3 py-2 font-mono text-xs text-gray-300">
+                                            handball.no/system/kamper/lag/?lagid=XXXXXX
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">5</div>
+                                    <div>
+                                        <p className="font-bold text-white">Lim inn her og importer!</p>
+                                        <p className="mt-1 text-sm text-gray-400">
+                                            Lim inn nettadressen i feltet under og trykk «Importer kamper».
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <form onSubmit={handleImport} className="mt-6 flex flex-col gap-4">
                             <div>
                                 <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">
-                                    Kalender-link (Abonner på kalender)
+                                    Lagets nettadresse fra handball.no
                                 </label>
                                 <input
                                     type="text"
                                     value={url}
                                     onChange={(e) => setUrl(e.target.value)}
-                                    placeholder="https://www.handball.no/system/ical/?teamid=..."
+                                    placeholder="https://www.handball.no/system/kamper/lag/?lagid=..."
                                     className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white placeholder-gray-600 transition focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                                     required
                                 />
+                                <p className="mt-2 text-xs text-gray-500">
+                                    Adressen må inneholde <span className="font-mono text-gray-400">lagid=</span> etterfulgt av et tall.
+                                </p>
                             </div>
 
                             {status === 'error' && (
@@ -206,8 +275,8 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                                     'Importerer kamper...'
                                 ) : (
                                     <>
-                                        <CalendarPlus size={20} />
-                                        Hent fra iCal
+                                        <ExternalLink size={18} />
+                                        Importer kamper
                                     </>
                                 )}
                             </button>

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { addDoc, collection, Timestamp } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, onSnapshot, setDoc, Timestamp } from 'firebase/firestore';
 import { clsx } from 'clsx';
 import {
     CheckCircle2,
@@ -29,15 +29,23 @@ import { useTeams } from '../hooks/useTeams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { db } from '../lib/firebase';
 import {
+    LIVE_STATS_DEFAULTS_KEY,
+    LIVE_STATS_DEFAULTS_REMOTE_DOC,
+    LIVE_STATS_UI_KEY,
+    LIVE_STATS_UI_REMOTE_DOC,
+    normalizeLiveStatsDefaults,
+    normalizeLiveStatsUiDraft,
+    type LiveStatsButtonDefinition,
+    type LiveStatsDefaults,
+    type LiveStatsUiDraft,
+} from '../lib/liveStatsState';
+import {
     buildStoredMatchDocument,
     type CustomStatDefinition,
     type MatchEvent,
     type TeamReference,
     type TeamSide,
 } from '../lib/matchData';
-
-const LIVE_STATS_UI_KEY = 'handball-help-live-ui:v2';
-const LIVE_STATS_DEFAULTS_KEY = 'handball-help-live-defaults:v1';
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error';
 
@@ -48,6 +56,12 @@ interface FeedbackState {
 
 export function Stats() {
     const navigate = useNavigate();
+    const uiDraftSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const defaultsSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastUiDraftSavedAtRef = useRef<number | null>(null);
+    const lastDefaultsSavedAtRef = useRef<number | null>(null);
+    const homeTeamIdRef = useRef('');
+    const awayTeamIdRef = useRef('');
     const {
         matchTime,
         isRunning,
@@ -77,7 +91,7 @@ export function Stats() {
     const [awayTeamId, setAwayTeamId] = useState('');
     const [matchName, setMatchName] = useState('');
     const [isEditMode, setIsEditMode] = useState(false);
-    const [customButtons, setCustomButtons] = useState<{ id: string; label: string; color: string }[]>([]);
+    const [customButtons, setCustomButtons] = useState<LiveStatsButtonDefinition[]>([]);
     const [pendingShot, setPendingShot] = useState<{ x: number; y: number } | null>(null);
     const [pendingGoalPlacement, setPendingGoalPlacement] = useState<{ x: number; y: number } | null>(null);
     const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -92,6 +106,39 @@ export function Stats() {
     const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
     const [savedMatchName, setSavedMatchName] = useState('');
     const [isSaveSuccessDialogOpen, setIsSaveSuccessDialogOpen] = useState(false);
+    const [lastUiDraftSavedAt, setLastUiDraftSavedAt] = useState<number | null>(null);
+    const [lastDefaultsSavedAt, setLastDefaultsSavedAt] = useState<number | null>(null);
+    const [hasResolvedRemoteUiDraft, setHasResolvedRemoteUiDraft] = useState(false);
+    const [hasResolvedRemoteDefaults, setHasResolvedRemoteDefaults] = useState(false);
+
+    const applyUiDraft = (draft: LiveStatsUiDraft) => {
+        setActiveSide(draft.activeSide === 'away' ? 'away' : 'home');
+        setHomeTeamId(typeof draft.homeTeamId === 'string' ? draft.homeTeamId : '');
+        setAwayTeamId(typeof draft.awayTeamId === 'string' ? draft.awayTeamId : '');
+        setMatchName(typeof draft.matchName === 'string' ? draft.matchName : '');
+        setIsMatchStarted(Boolean(draft.isMatchStarted));
+        setCustomButtons(Array.isArray(draft.customButtons) ? draft.customButtons : []);
+        setLastUiDraftSavedAt(typeof draft.updatedAt === 'number' ? draft.updatedAt : null);
+    };
+
+    const applyDefaults = (defaults: LiveStatsDefaults) => {
+        setHomeTeamId(typeof defaults.homeTeamId === 'string' ? defaults.homeTeamId : '');
+        setAwayTeamId(typeof defaults.awayTeamId === 'string' ? defaults.awayTeamId : '');
+        setLastDefaultsSavedAt(typeof defaults.updatedAt === 'number' ? defaults.updatedAt : null);
+    };
+
+    useEffect(() => {
+        lastUiDraftSavedAtRef.current = lastUiDraftSavedAt;
+    }, [lastUiDraftSavedAt]);
+
+    useEffect(() => {
+        lastDefaultsSavedAtRef.current = lastDefaultsSavedAt;
+    }, [lastDefaultsSavedAt]);
+
+    useEffect(() => {
+        homeTeamIdRef.current = homeTeamId;
+        awayTeamIdRef.current = awayTeamId;
+    }, [awayTeamId, homeTeamId]);
 
     useEffect(() => {
         if (typeof window === 'undefined') {
@@ -104,32 +151,18 @@ export function Stats() {
             if (!rawDraft) {
                 const rawDefaults = window.localStorage.getItem(LIVE_STATS_DEFAULTS_KEY);
                 if (rawDefaults) {
-                    const parsedDefaults = JSON.parse(rawDefaults) as {
-                        homeTeamId?: string;
-                        awayTeamId?: string;
-                    };
-
-                    setHomeTeamId(typeof parsedDefaults.homeTeamId === 'string' ? parsedDefaults.homeTeamId : '');
-                    setAwayTeamId(typeof parsedDefaults.awayTeamId === 'string' ? parsedDefaults.awayTeamId : '');
+                    const parsedDefaults = normalizeLiveStatsDefaults(JSON.parse(rawDefaults));
+                    if (parsedDefaults) {
+                        applyDefaults(parsedDefaults);
+                    }
                 }
                 return;
             }
 
-            const parsedDraft = JSON.parse(rawDraft) as {
-                activeSide?: TeamSide;
-                homeTeamId?: string;
-                awayTeamId?: string;
-                matchName?: string;
-                isMatchStarted?: boolean;
-                customButtons?: { id: string; label: string; color: string }[];
-            };
-
-            setActiveSide(parsedDraft.activeSide === 'away' ? 'away' : 'home');
-            setHomeTeamId(typeof parsedDraft.homeTeamId === 'string' ? parsedDraft.homeTeamId : '');
-            setAwayTeamId(typeof parsedDraft.awayTeamId === 'string' ? parsedDraft.awayTeamId : '');
-            setMatchName(typeof parsedDraft.matchName === 'string' ? parsedDraft.matchName : '');
-            setIsMatchStarted(Boolean(parsedDraft.isMatchStarted));
-            setCustomButtons(Array.isArray(parsedDraft.customButtons) ? parsedDraft.customButtons : []);
+            const parsedDraft = normalizeLiveStatsUiDraft(JSON.parse(rawDraft));
+            if (parsedDraft) {
+                applyUiDraft(parsedDraft);
+            }
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokalt kampoppsett.', draftError);
             window.localStorage.removeItem(LIVE_STATS_UI_KEY);
@@ -139,8 +172,85 @@ export function Stats() {
     }, []);
 
     useEffect(() => {
+        if (!currentUser) {
+            setHasResolvedRemoteUiDraft(true);
+            return;
+        }
+
+        setHasResolvedRemoteUiDraft(false);
+
+        const uiDraftRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            uiDraftRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    setHasResolvedRemoteUiDraft(true);
+                    return;
+                }
+
+                const remoteDraft = normalizeLiveStatsUiDraft(snapshot.data());
+                const remoteUpdatedAt = remoteDraft?.updatedAt ?? 0;
+                const localUpdatedAt = lastUiDraftSavedAtRef.current ?? 0;
+
+                if (remoteDraft && remoteUpdatedAt > localUpdatedAt) {
+                    applyUiDraft(remoteDraft);
+                }
+
+                setHasResolvedRemoteUiDraft(true);
+            },
+            (draftError) => {
+                console.error('Kunne ikke hente kampoppsett fra skyen.', draftError);
+                setHasResolvedRemoteUiDraft(true);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
+
+    useEffect(() => {
+        if (!currentUser) {
+            setHasResolvedRemoteDefaults(true);
+            return;
+        }
+
+        setHasResolvedRemoteDefaults(false);
+
+        const defaultsRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            defaultsRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    setHasResolvedRemoteDefaults(true);
+                    return;
+                }
+
+                const remoteDefaults = normalizeLiveStatsDefaults(snapshot.data());
+                const remoteUpdatedAt = remoteDefaults?.updatedAt ?? 0;
+                const localUpdatedAt = lastDefaultsSavedAtRef.current ?? 0;
+
+                if (remoteDefaults && remoteUpdatedAt > localUpdatedAt && !homeTeamIdRef.current && !awayTeamIdRef.current) {
+                    applyDefaults(remoteDefaults);
+                }
+
+                setHasResolvedRemoteDefaults(true);
+            },
+            (defaultsError) => {
+                console.error('Kunne ikke hente lagvalg fra skyen.', defaultsError);
+                setHasResolvedRemoteDefaults(true);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
+
+    useEffect(() => {
         if (!hasHydratedUiDraft || typeof window === 'undefined') {
             return;
+        }
+
+        if (uiDraftSyncTimeoutRef.current) {
+            clearTimeout(uiDraftSyncTimeoutRef.current);
+            uiDraftSyncTimeoutRef.current = null;
         }
 
         const hasUiContent = (
@@ -154,34 +264,89 @@ export function Stats() {
 
         if (!hasUiContent) {
             window.localStorage.removeItem(LIVE_STATS_UI_KEY);
+            setLastUiDraftSavedAt(null);
+
+            if (currentUser && hasResolvedRemoteUiDraft) {
+                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC)).catch((draftError) => {
+                    console.error('Kunne ikke fjerne kampoppsett fra skyen.', draftError);
+                });
+            }
+
             return;
         }
 
-        window.localStorage.setItem(LIVE_STATS_UI_KEY, JSON.stringify({
+        const updatedAt = Date.now();
+        const nextUiDraft: LiveStatsUiDraft = {
             activeSide,
             homeTeamId,
             awayTeamId,
             matchName,
             isMatchStarted,
             customButtons,
-        }));
-    }, [activeSide, awayTeamId, customButtons, hasHydratedUiDraft, homeTeamId, isMatchStarted, matchName]);
+            updatedAt,
+        };
+
+        window.localStorage.setItem(LIVE_STATS_UI_KEY, JSON.stringify(nextUiDraft));
+        setLastUiDraftSavedAt(updatedAt);
+
+        if (!currentUser || !hasResolvedRemoteUiDraft) {
+            return;
+        }
+
+        uiDraftSyncTimeoutRef.current = setTimeout(() => {
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC), nextUiDraft).catch((draftError) => {
+                console.error('Kunne ikke synkronisere kampoppsett til skyen.', draftError);
+            });
+        }, 700);
+
+        return () => {
+            if (uiDraftSyncTimeoutRef.current) {
+                clearTimeout(uiDraftSyncTimeoutRef.current);
+                uiDraftSyncTimeoutRef.current = null;
+            }
+        };
+    }, [activeSide, awayTeamId, currentUser, customButtons, hasHydratedUiDraft, hasResolvedRemoteUiDraft, homeTeamId, isMatchStarted, matchName]);
 
     useEffect(() => {
         if (typeof window === 'undefined') {
             return;
         }
 
+        if (defaultsSyncTimeoutRef.current) {
+            clearTimeout(defaultsSyncTimeoutRef.current);
+            defaultsSyncTimeoutRef.current = null;
+        }
+
         if (!homeTeamId && !awayTeamId) {
             return;
         }
 
-        window.localStorage.setItem(LIVE_STATS_DEFAULTS_KEY, JSON.stringify({
+        const nextDefaults: LiveStatsDefaults = {
             homeTeamId,
             awayTeamId,
             updatedAt: Date.now(),
-        }));
-    }, [awayTeamId, homeTeamId]);
+        };
+
+        window.localStorage.setItem(LIVE_STATS_DEFAULTS_KEY, JSON.stringify(nextDefaults));
+        setLastDefaultsSavedAt(nextDefaults.updatedAt ?? null);
+
+        if (!currentUser || !hasResolvedRemoteDefaults) {
+            return;
+        }
+
+        defaultsSyncTimeoutRef.current = setTimeout(() => {
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC), nextDefaults).catch((defaultsError) => {
+                console.error('Kunne ikke synkronisere lagvalg til skyen.', defaultsError);
+            });
+        }, 700);
+
+        return () => {
+            if (defaultsSyncTimeoutRef.current) {
+                clearTimeout(defaultsSyncTimeoutRef.current);
+                defaultsSyncTimeoutRef.current = null;
+            }
+        };
+    }, [awayTeamId, currentUser, hasResolvedRemoteDefaults, homeTeamId]);
 
     useEffect(() => {
         if (!feedback || feedback.type === 'error' || feedback.type === 'warning') {
@@ -193,19 +358,27 @@ export function Stats() {
     }, [feedback]);
 
     useEffect(() => {
+        if (!hasResolvedRemoteUiDraft || !hasResolvedRemoteDefaults) {
+            return;
+        }
+
         if (teams.length > 0 && !homeTeamId) {
             setHomeTeamId(teams[0].name);
         }
-    }, [teams, homeTeamId]);
+    }, [hasResolvedRemoteDefaults, hasResolvedRemoteUiDraft, teams, homeTeamId]);
 
     useEffect(() => {
+        if (!hasResolvedRemoteUiDraft || !hasResolvedRemoteDefaults) {
+            return;
+        }
+
         if (teams.length > 1 && !awayTeamId) {
             const fallbackAway = teams.find((team) => team.name !== homeTeamId);
             if (fallbackAway) {
                 setAwayTeamId(fallbackAway.name);
             }
         }
-    }, [awayTeamId, homeTeamId, teams]);
+    }, [awayTeamId, hasResolvedRemoteDefaults, hasResolvedRemoteUiDraft, homeTeamId, teams]);
 
     const resolveTeamReference = (selectedName: string, fallbackName: string): TeamReference => {
         const matchingTeam = teams.find((team) => team.name === selectedName);

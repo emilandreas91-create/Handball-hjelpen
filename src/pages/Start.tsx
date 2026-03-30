@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { Activity, ArrowRight, ClipboardList, History, Play, Users, WifiOff, type LucideIcon } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useAuth } from '../components/features/useAuth';
 import { useTeams } from '../hooks/useTeams';
 import { useTactics } from '../hooks/useTactics';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useMatchContext } from '../hooks/useMatch';
-
-const LIVE_STATS_DEFAULTS_KEY = 'handball-help-live-defaults:v1';
-
-interface LiveStatsDefaults {
-    homeTeamId?: string;
-    awayTeamId?: string;
-    updatedAt?: number;
-}
+import { db } from '../lib/firebase';
+import {
+    LIVE_STATS_DEFAULTS_KEY,
+    LIVE_STATS_DEFAULTS_REMOTE_DOC,
+    normalizeLiveStatsDefaults,
+    type LiveStatsDefaults,
+} from '../lib/liveStatsState';
 
 interface ActionCardProps {
     title: string;
@@ -22,29 +23,81 @@ interface ActionCardProps {
     to: string;
     icon: LucideIcon;
     highlight?: boolean;
+    animationClass?: string;
 }
 
-function ActionCard({ title, description, detail, to, icon: Icon, highlight = false }: ActionCardProps) {
+function ActionCard({
+    title,
+    description,
+    detail,
+    to,
+    icon: Icon,
+    highlight = false,
+    animationClass = 'home-fade-up-delay-1',
+}: ActionCardProps) {
     return (
         <Link
             to={to}
             className={clsx(
-                'group rounded-[2rem] border p-5 shadow-xl transition hover:-translate-y-0.5 hover:border-primary/40 hover:bg-white/10',
-                highlight ? 'border-primary/30 bg-primary/10' : 'border-white/10 bg-black/20',
+                animationClass,
+                'group relative flex min-h-[12.5rem] flex-col overflow-hidden rounded-[1.9rem] border p-5 text-left transition duration-300 ease-out hover:-translate-y-1',
+                highlight
+                    ? 'border-cyan-300/20 shadow-[0_26px_90px_rgba(10,32,56,0.42)] hover:border-cyan-300/40 hover:shadow-[0_30px_100px_rgba(34,211,238,0.16)]'
+                    : 'border-white/10 shadow-[0_22px_72px_rgba(0,0,0,0.28)] hover:border-white/20 hover:shadow-[0_28px_90px_rgba(8,16,30,0.42)]',
             )}
+            style={{
+                background: highlight
+                    ? 'linear-gradient(160deg, rgba(15, 30, 49, 0.98) 0%, rgba(13, 31, 48, 0.94) 44%, rgba(7, 16, 27, 0.98) 100%)'
+                    : 'linear-gradient(180deg, rgba(14, 22, 35, 0.92) 0%, rgba(8, 14, 24, 0.88) 100%)',
+            }}
         >
-            <div className="flex items-start justify-between gap-3">
-                <div className={clsx(
-                    'flex h-12 w-12 items-center justify-center rounded-2xl',
-                    highlight ? 'bg-primary text-black' : 'bg-white/10 text-primary',
-                )}>
-                    <Icon size={22} />
+            <div
+                aria-hidden="true"
+                className={clsx(
+                    'absolute inset-0 opacity-80 transition duration-300 group-hover:opacity-100',
+                    highlight ? 'bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.18),transparent_42%)]' : 'bg-[radial-gradient(circle_at_top_right,rgba(96,165,250,0.10),transparent_40%)]',
+                )}
+            />
+            <div
+                aria-hidden="true"
+                className="absolute inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+            />
+
+            <div className="relative flex h-full flex-col">
+                <div className="flex items-start justify-between gap-4">
+                    <div
+                        className={clsx(
+                            'flex h-12 w-12 items-center justify-center rounded-2xl border backdrop-blur-md transition duration-300 group-hover:scale-[1.03]',
+                            highlight
+                                ? 'border-cyan-300/25 bg-cyan-300/12 text-cyan-50'
+                                : 'border-white/10 bg-white/[0.05] text-cyan-100',
+                        )}
+                    >
+                        <Icon size={22} />
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/40 transition duration-300 group-hover:border-cyan-300/25 group-hover:bg-cyan-300/10 group-hover:text-cyan-100">
+                        <ArrowRight size={16} />
+                    </div>
                 </div>
-                <ArrowRight className="mt-1 text-white/30 transition group-hover:text-primary" size={18} />
+
+                <div className="mt-8">
+                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-50">{title}</h2>
+                    <p className="mt-2 text-sm font-medium text-slate-300">{description}</p>
+                </div>
+
+                <div className="mt-auto pt-5">
+                    <span
+                        className={clsx(
+                            'inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold tracking-[0.02em]',
+                            highlight
+                                ? 'border-cyan-300/20 bg-cyan-300/10 text-cyan-50'
+                                : 'border-white/10 bg-white/[0.04] text-slate-300',
+                        )}
+                    >
+                        {detail}
+                    </span>
+                </div>
             </div>
-            <h2 className="mt-5 text-xl font-bold text-white">{title}</h2>
-            <p className="mt-2 text-sm font-medium text-gray-300">{description}</p>
-            <p className="mt-1 text-sm text-white/50">{detail}</p>
         </Link>
     );
 }
@@ -59,20 +112,55 @@ interface ActivityCardProps {
 
 function ActivityCard({ title, primary, secondary, actionLabel, actionTo }: ActivityCardProps) {
     return (
-        <article className="rounded-3xl border border-white/10 bg-black/20 p-5 shadow-xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">{title}</p>
-            <h2 className="mt-3 text-lg font-bold text-white">{primary}</h2>
-            <p className="mt-2 text-sm leading-6 text-gray-400">{secondary}</p>
+        <article className="rounded-[1.6rem] border border-white/10 bg-white/[0.035] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.18)] backdrop-blur-sm transition duration-300 hover:border-white/20 hover:bg-white/[0.05]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{title}</p>
+            <h2 className="mt-3 text-base font-semibold tracking-[-0.02em] text-slate-100">{primary}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-400">{secondary}</p>
             {actionLabel && actionTo ? (
                 <Link
                     to={actionTo}
-                    className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-primary transition hover:text-white"
+                    className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-200 transition hover:text-white"
                 >
                     {actionLabel}
-                    <ArrowRight size={16} />
+                    <ArrowRight size={15} />
                 </Link>
             ) : null}
         </article>
+    );
+}
+
+interface StatusPillProps {
+    icon: LucideIcon;
+    label: string;
+    detail: string;
+    tone?: 'default' | 'warning';
+}
+
+function StatusPill({ icon: Icon, label, detail, tone = 'default' }: StatusPillProps) {
+    return (
+        <div
+            className={clsx(
+                'inline-flex min-w-[10rem] items-center gap-3 rounded-full border px-4 py-3 text-sm shadow-[0_14px_40px_rgba(0,0,0,0.16)] backdrop-blur-sm',
+                tone === 'warning'
+                    ? 'border-yellow-400/20 bg-yellow-400/10 text-yellow-50'
+                    : 'border-white/10 bg-white/[0.04] text-slate-200',
+            )}
+        >
+            <div
+                className={clsx(
+                    'flex h-9 w-9 items-center justify-center rounded-full border',
+                    tone === 'warning'
+                        ? 'border-yellow-300/20 bg-yellow-300/10 text-yellow-100'
+                        : 'border-cyan-300/20 bg-cyan-300/10 text-cyan-100',
+                )}
+            >
+                <Icon size={16} />
+            </div>
+            <div className="min-w-0">
+                <p className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-white/60">{label}</p>
+                <p className="truncate text-sm font-medium text-current">{detail}</p>
+            </div>
+        </div>
     );
 }
 
@@ -83,6 +171,7 @@ const formatClock = (value: number | null) => (
 );
 
 export function Start() {
+    const { currentUser } = useAuth();
     const { teams, loading: teamsLoading } = useTeams();
     const { tactics, loading: tacticsLoading } = useTactics();
     const isOnline = useOnlineStatus();
@@ -109,16 +198,46 @@ export function Start() {
                 return;
             }
 
-            const parsedDefaults = JSON.parse(rawDefaults) as LiveStatsDefaults;
-            setRecentMatchDefaults({
-                homeTeamId: typeof parsedDefaults.homeTeamId === 'string' ? parsedDefaults.homeTeamId : undefined,
-                awayTeamId: typeof parsedDefaults.awayTeamId === 'string' ? parsedDefaults.awayTeamId : undefined,
-                updatedAt: typeof parsedDefaults.updatedAt === 'number' ? parsedDefaults.updatedAt : undefined,
-            });
+            const parsedDefaults = normalizeLiveStatsDefaults(JSON.parse(rawDefaults));
+            if (parsedDefaults) {
+                setRecentMatchDefaults(parsedDefaults);
+            }
         } catch (error) {
             console.error('Kunne ikke lese sist brukte kampvalg.', error);
         }
     }, []);
+
+    useEffect(() => {
+        if (!currentUser) {
+            return;
+        }
+
+        const defaultsRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            defaultsRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    return;
+                }
+
+                const remoteDefaults = normalizeLiveStatsDefaults(snapshot.data());
+                if (!remoteDefaults) {
+                    return;
+                }
+
+                setRecentMatchDefaults((current) => {
+                    const currentUpdatedAt = current?.updatedAt ?? 0;
+                    const remoteUpdatedAt = remoteDefaults.updatedAt ?? 0;
+                    return remoteUpdatedAt >= currentUpdatedAt ? remoteDefaults : current;
+                });
+            },
+            (error) => {
+                console.error('Kunne ikke hente sist brukte kampvalg fra skyen.', error);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
 
     const hasLiveDraft = (
         matchTime > 0 ||
@@ -143,13 +262,46 @@ export function Start() {
     const formattedDraftTime = formatClock(lastDraftSavedAt);
 
     return (
-        <div className="space-y-6">
-            <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
-                <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">Handball-hjelpen</p>
-                <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
-                    Handball-hjelpen
-                </h1>
-                <p className="mt-3 text-base text-gray-300">Velg hva du vil gjøre nå.</p>
+        <div className="relative isolate space-y-5 pb-4 pt-2 md:space-y-6 md:pt-4">
+            <section
+                className="home-fade-up relative overflow-hidden rounded-[2.25rem] border border-white/10 px-6 py-8 shadow-[0_32px_100px_rgba(3,8,18,0.46)] backdrop-blur-xl md:px-8 md:py-10"
+                style={{
+                    background: 'linear-gradient(145deg, rgba(13, 24, 40, 0.98) 0%, rgba(11, 23, 38, 0.95) 42%, rgba(7, 14, 24, 0.99) 100%)',
+                }}
+            >
+                <div
+                    aria-hidden="true"
+                    className="start-ambient-drift absolute -right-16 top-0 h-44 w-44 rounded-full bg-cyan-300/10 blur-3xl"
+                />
+                <div
+                    aria-hidden="true"
+                    className="absolute bottom-[-5rem] left-[-4rem] h-36 w-36 rounded-full bg-sky-400/8 blur-3xl"
+                />
+                <div
+                    aria-hidden="true"
+                    className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/30 to-transparent"
+                />
+                <div
+                    aria-hidden="true"
+                    className="absolute right-4 top-4 hidden h-[calc(100%-2rem)] w-[34%] rounded-[2rem] border border-white/[0.06] bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.10),transparent_64%)] lg:block"
+                />
+                <div
+                    aria-hidden="true"
+                    className="absolute right-[8%] top-[18%] hidden h-32 w-32 rounded-full border border-white/10 lg:block"
+                />
+                <div
+                    aria-hidden="true"
+                    className="absolute right-[8%] top-1/2 hidden h-px w-[34%] -translate-y-1/2 bg-gradient-to-r from-white/5 via-white/10 to-transparent lg:block"
+                />
+                <div className="relative max-w-2xl">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-cyan-200/75">Forside</p>
+                    <h1 className="mt-4 text-4xl font-black tracking-[-0.05em] text-slate-50 md:text-5xl">
+                        Handball-hjelpen
+                    </h1>
+                    <p className="mt-4 max-w-xl text-base font-medium leading-7 text-slate-300">
+                        Velg hva du vil gjøre nå.
+                    </p>
+                </div>
             </section>
 
             <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -176,6 +328,7 @@ export function Start() {
                     detail={teams.length > 0 ? 'Gå til lagoversikten.' : 'Opprett første lag.'}
                     to="/teams"
                     icon={Users}
+                    animationClass="home-fade-up-delay-2"
                 />
                 <ActionCard
                     title="Taktikk"
@@ -183,16 +336,27 @@ export function Start() {
                     detail={latestTactic?.teamName || 'Åpne taktikktavla.'}
                     to="/tactics"
                     icon={ClipboardList}
+                    animationClass="home-fade-up-delay-2"
                 />
             </section>
 
-            <section className="rounded-[2rem] border border-white/10 bg-black/20 p-5 shadow-xl sm:p-6">
+            <section
+                className="home-fade-up-delay-2 rounded-[1.9rem] border border-white/10 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.24)] backdrop-blur-xl sm:p-6"
+                style={{
+                    background: 'linear-gradient(180deg, rgba(12, 20, 33, 0.84) 0%, rgba(8, 14, 24, 0.72) 100%)',
+                }}
+            >
                 <div className="flex items-center gap-3">
-                    <History size={18} className="text-primary" />
-                    <h2 className="text-xl font-bold text-white">Siste aktivitet</h2>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-cyan-100">
+                        <History size={18} />
+                    </div>
+                    <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Rask oversikt</p>
+                        <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-50">Siste aktivitet</h2>
+                    </div>
                 </div>
 
-                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
                     <ActivityCard
                         title="Siste kamp"
                         primary={hasLiveDraft ? 'Siste kamp kan fortsette' : 'Ingen kamp ennå'}
@@ -224,30 +388,29 @@ export function Start() {
             </section>
 
             {(!isOnline || hasLiveDraft || teams.length > 0 || draftRecovered) ? (
-                <section className="grid gap-3 sm:grid-cols-3">
+                <section className="home-fade-up-delay-3 flex flex-wrap gap-2.5">
                     {hasLiveDraft || draftRecovered ? (
-                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200">
-                            <p className="font-semibold text-white">Lokal kladd</p>
-                            <p className="mt-1 text-white/60">
-                                {formattedDraftTime ? `Sist oppdatert ${formattedDraftTime}.` : 'Kampkladd aktiv.'}
-                            </p>
-                        </div>
+                        <StatusPill
+                            icon={Activity}
+                            label="Lokal kladd"
+                            detail={formattedDraftTime ? `Oppdatert ${formattedDraftTime}` : 'Kampkladd aktiv'}
+                        />
                     ) : null}
 
                     {!isOnline ? (
-                        <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-100">
-                            <div className="flex items-center gap-2 font-semibold">
-                                <WifiOff size={16} />
-                                Offline
-                            </div>
-                            <p className="mt-1 text-yellow-50/80">Du kan fortsatt jobbe videre i lokal kladd.</p>
-                        </div>
+                        <StatusPill
+                            icon={WifiOff}
+                            label="Status"
+                            detail="Offline"
+                            tone="warning"
+                        />
                     ) : null}
 
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-gray-200">
-                        <p className="font-semibold text-white">Lag</p>
-                        <p className="mt-1 text-white/60">{teamsLoading ? 'Henter lag...' : `${teams.length} registrert`}</p>
-                    </div>
+                    <StatusPill
+                        icon={Users}
+                        label="Lag"
+                        detail={teamsLoading ? 'Henter lag...' : `${teams.length} registrert`}
+                    />
                 </section>
             ) : null}
         </div>
