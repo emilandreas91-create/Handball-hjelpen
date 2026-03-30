@@ -28,11 +28,11 @@ import {
     type MatchEvent,
     type StoredTeamStats,
 } from '../lib/matchData';
-import { fetchAndParseSchedule } from '../lib/icalParser';
+import { parseScheduleText } from '../lib/icalParser';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/useAuth';
-import { X, CalendarPlus, CheckCircle2, ExternalLink, ChevronRight } from 'lucide-react';
+import { X, CalendarPlus, CheckCircle2, ClipboardPaste, ChevronRight } from 'lucide-react';
 
 
 type ViewMode = 'general' | 'goalkeeper';
@@ -77,28 +77,28 @@ interface ImportModalProps {
 }
 
 function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
-    const [url, setUrl] = useState('');
+    const [pastedText, setPastedText] = useState('');
     const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [errorMsg, setErrorMsg] = useState('');
     const [importedCount, setImportedCount] = useState(0);
-    const [showGuide, setShowGuide] = useState(false);
+    const [showGuide, setShowGuide] = useState(true);
     const { currentUser } = useAuth();
 
     if (!isOpen) return null;
 
     const handleImport = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!url || !currentUser) return;
+        if (!pastedText.trim() || !currentUser) return;
 
         setStatus('loading');
         setErrorMsg('');
 
         try {
-            const parsedMatches = await fetchAndParseSchedule(url);
+            const parsedMatches = parseScheduleText(pastedText);
 
             if (parsedMatches.length === 0) {
                 setStatus('error');
-                setErrorMsg('Fant ingen kamper i terminlisten. Sjekk at linken er riktig og at laget har registrerte kamper.');
+                setErrorMsg('Fant ingen kamper i teksten du limte inn. Sørg for at du har kopiert hele terminliste-tabellen fra handball.no (inkludert datoer og lagnavn).');
                 return;
             }
 
@@ -142,6 +142,15 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
         }
     };
 
+    const detectedCount = (() => {
+        try {
+            if (!pastedText.trim()) return 0;
+            return parseScheduleText(pastedText).length;
+        } catch {
+            return 0;
+        }
+    })();
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
             <div className="relative w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-gray-900 p-6 shadow-2xl sm:p-8">
@@ -159,7 +168,7 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                         </div>
                         <h3 className="text-2xl font-black text-white">Import fullført!</h3>
                         <p className="mt-3 text-gray-400">
-                            {importedCount} kamper ble hentet fra handball.no og lagt til i listen din.
+                            {importedCount} kamper ble importert og lagt til i listen din.
                         </p>
                         <p className="mt-2 text-xs text-gray-500">
                             Kampene ligger nå klare. Du kan starte live-registrering, eller legge inn resultat i ettertid.
@@ -175,8 +184,7 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                     <>
                         <h2 className="text-2xl font-black text-white">Importer Terminliste</h2>
                         <p className="mt-2 text-sm leading-relaxed text-gray-400">
-                            Hent hele sesongens kampoppsett direkte fra Håndballforbundets nettsider.  
-                            Lim inn lagets nettadresse fra <span className="font-semibold text-gray-300">handball.no</span>, så importerer vi alle kampene automatisk.
+                            Kopier terminlisten fra lagets side på <span className="font-semibold text-gray-300">handball.no</span> og lim den inn her. Vi leser automatisk ut alle kampene.
                         </p>
 
                         {/* Steg-for-steg guide */}
@@ -186,7 +194,7 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                             className="mt-4 flex w-full items-center gap-2 text-left text-sm font-semibold text-primary transition hover:text-white"
                         >
                             <ChevronRight size={16} className={`transition-transform ${showGuide ? 'rotate-90' : ''}`} />
-                            {showGuide ? 'Skjul veiledning' : 'Hvor finner jeg lenken? (Vis veiledning)'}
+                            {showGuide ? 'Skjul veiledning' : 'Slik gjør du det (vis veiledning)'}
                         </button>
 
                         {showGuide && (
@@ -212,30 +220,27 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                                 <div className="flex gap-3">
                                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">3</div>
                                     <div>
-                                        <p className="font-bold text-white">Velg riktig lag</p>
+                                        <p className="font-bold text-white">Åpne «Terminliste»</p>
                                         <p className="mt-1 text-sm text-gray-400">
-                                            Trykk deg inn på klubben, og finn riktig lag i listen (f.eks. «{team.name}»). Du skal nå se lagets terminliste med alle kampene.
+                                            Klikk på <span className="font-semibold text-gray-300">«Terminliste»</span>-overskriften for å vise alle kampene i en tabell.
                                         </p>
                                     </div>
                                 </div>
                                 <div className="flex gap-3">
                                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">4</div>
                                     <div>
-                                        <p className="font-bold text-white">Kopier nettadressen</p>
+                                        <p className="font-bold text-white">Marker og kopier tabellen</p>
                                         <p className="mt-1 text-sm text-gray-400">
-                                            Kopier hele <span className="font-semibold text-gray-300">nettadressen fra adressefeltet</span> i nettleseren din. Den ser omtrent slik ut:
-                                        </p>
-                                        <p className="mt-2 rounded-lg bg-black/40 px-3 py-2 font-mono text-xs text-gray-300">
-                                            handball.no/system/kamper/lag/?lagid=XXXXXX
+                                            Marker alle radene i terminliste-tabellen (fra første dato til siste kamp). Bruk <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-gray-300">Ctrl+C</span> for å kopiere.
                                         </p>
                                     </div>
                                 </div>
                                 <div className="flex gap-3">
                                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-black text-black">5</div>
                                     <div>
-                                        <p className="font-bold text-white">Lim inn her og importer!</p>
+                                        <p className="font-bold text-white">Lim inn og importer</p>
                                         <p className="mt-1 text-sm text-gray-400">
-                                            Lim inn nettadressen i feltet under og trykk «Importer kamper».
+                                            Klikk i tekstfeltet under og lim inn med <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-gray-300">Ctrl+V</span>. Trykk deretter «Importer kamper».
                                         </p>
                                     </div>
                                 </div>
@@ -245,19 +250,23 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
                         <form onSubmit={handleImport} className="mt-6 flex flex-col gap-4">
                             <div>
                                 <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">
-                                    Lagets nettadresse fra handball.no
+                                    Lim inn terminlisten her
                                 </label>
-                                <input
-                                    type="text"
-                                    value={url}
-                                    onChange={(e) => setUrl(e.target.value)}
-                                    placeholder="https://www.handball.no/system/kamper/lag/?lagid=..."
-                                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white placeholder-gray-600 transition focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                                <textarea
+                                    value={pastedText}
+                                    onChange={(e) => setPastedText(e.target.value)}
+                                    placeholder={"06.09.25 13:30\t95041615001\tOppsal Arena 1\tLarvik Turn\tBjarg\t17-25\n06.09.25 19:00\t95041615005\tOppsal Arena 1\tBjarg\tOppsal\t20-18\n..."}
+                                    rows={6}
+                                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-4 font-mono text-sm text-white placeholder-gray-600 transition focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                                     required
                                 />
-                                <p className="mt-2 text-xs text-gray-500">
-                                    Adressen må inneholde <span className="font-mono text-gray-400">lagid=</span> etterfulgt av et tall.
-                                </p>
+                                {pastedText.trim() && (
+                                    <p className={`mt-2 text-xs font-semibold ${detectedCount > 0 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                        {detectedCount > 0
+                                            ? `✓ ${detectedCount} kamper gjenkjent i teksten`
+                                            : '⚠ Ingen kamper gjenkjent ennå. Sørg for at teksten inneholder datoer (f.eks. 06.09.25 13:30).'}
+                                    </p>
+                                )}
                             </div>
 
                             {status === 'error' && (
@@ -268,15 +277,15 @@ function ImportScheduleModal({ isOpen, onClose, team }: ImportModalProps) {
 
                             <button
                                 type="submit"
-                                disabled={status === 'loading'}
+                                disabled={status === 'loading' || detectedCount === 0}
                                 className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 py-4 font-bold text-black transition hover:bg-white disabled:opacity-50"
                             >
                                 {status === 'loading' ? (
                                     'Importerer kamper...'
                                 ) : (
                                     <>
-                                        <ExternalLink size={18} />
-                                        Importer kamper
+                                        <ClipboardPaste size={18} />
+                                        Importer {detectedCount > 0 ? `${detectedCount} kamper` : 'kamper'}
                                     </>
                                 )}
                             </button>
