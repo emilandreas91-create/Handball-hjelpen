@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { clsx } from 'clsx';
 import { ArrowRight, Copy, FolderOpen, Play, Plus, Save, ShieldAlert, Trash2, Users, Wifi, WifiOff } from 'lucide-react';
+import { useAuth } from '../components/features/useAuth';
 import { TacticBoard, type TacticBoardTool } from '../components/features/TacticBoard';
 import { Dialog } from '../components/ui/Dialog';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -9,10 +11,12 @@ import { LoadingState } from '../components/ui/LoadingState';
 import { useTactics } from '../hooks/useTactics';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { type Team, useTeams } from '../hooks/useTeams';
+import { db } from '../lib/firebase';
 import { getTeamLookupNames, normalizeTeamNameKey } from '../lib/matchData';
 import { DEFAULT_FRAME_DURATION_MS, MAX_TACTIC_PLAYERS, MIN_TACTIC_PLAYERS, cloneFrame, createEmptyTacticDraft, createPlayerToken, duplicateTokensAcrossFrames, getPlayerTokens, normalizeStoredTacticDocument, removeTokenAcrossFrames, type NormalizedTacticDocument, type TacticDraft, type TacticFrame } from '../lib/tacticsData';
 
 const TACTICS_DRAFT_KEY = 'handball-help-tactics-draft:v1';
+const TACTICS_DRAFT_REMOTE_DOC = 'tacticsDraft';
 const FRAME_DURATION_OPTIONS = [800, DEFAULT_FRAME_DURATION_MS, 1800, 2600];
 type PendingSwitchAction = { type: 'new' } | { type: 'open'; tactic: NormalizedTacticDocument };
 const createPathId = () => `path_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -45,6 +49,9 @@ const findMatchingTeam = (teams: Team[], draft: Pick<TacticDraft, 'teamId' | 'te
 
 export function Tactics() {
     const navigate = useNavigate();
+    const { currentUser } = useAuth();
+    const draftSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastLocalSavedAtRef = useRef<number | null>(null);
     const { teams, loading: teamsLoading, error: teamsError } = useTeams();
     const { tactics, loading: tacticsLoading, error: tacticsError, saveTactic, deleteTactic } = useTactics();
     const isOnline = useOnlineStatus();
@@ -62,6 +69,7 @@ export function Tactics() {
     const [lastRemoteSavedAt, setLastRemoteSavedAt] = useState<number | null>(null);
     const [lastSavedSignature, setLastSavedSignature] = useState(() => buildDraftSignature(createEmptyTacticDraft()));
     const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
+    const [hasResolvedRemoteDraft, setHasResolvedRemoteDraft] = useState(false);
     const selectedTeam = useMemo(() => findMatchingTeam(teams, draft), [teams, draft]);
     const currentFrame = draft.frames[frameIndex] ?? draft.frames[0];
     const currentPlayers = currentFrame ? getPlayerTokens(currentFrame) : [];
@@ -100,6 +108,26 @@ export function Tactics() {
                 ? 'Lagre endringer'
                 : 'Lagre';
 
+    const applyRecoveredDraft = (
+        recoveredDraft: TacticDraft,
+        nextFrameIndex: number,
+        nextLastLocalSavedAt: number | null,
+        nextLastRemoteSavedAt: number | null,
+        nextLastSavedSignature: string,
+        recovered: boolean,
+    ) => {
+        setDraft(recoveredDraft);
+        setFrameIndex(Math.max(0, Math.min(nextFrameIndex, recoveredDraft.frames.length - 1)));
+        setLastLocalSavedAt(nextLastLocalSavedAt);
+        setLastRemoteSavedAt(nextLastRemoteSavedAt);
+        setLastSavedSignature(nextLastSavedSignature);
+        setDraftRecovered(recovered);
+    };
+
+    useEffect(() => {
+        lastLocalSavedAtRef.current = lastLocalSavedAt;
+    }, [lastLocalSavedAt]);
+
     useEffect(() => {
         if (typeof window === 'undefined') {
             setHasHydratedDraft(true);
@@ -133,12 +161,14 @@ export function Tactics() {
                     : undefined,
             };
 
-            setDraft(recoveredDraft);
-            setFrameIndex(typeof parsed.frameIndex === 'number' ? Math.max(0, Math.min(parsed.frameIndex, recoveredDraft.frames.length - 1)) : 0);
-            setLastLocalSavedAt(typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : null);
-            setLastRemoteSavedAt(typeof parsed.lastRemoteSavedAt === 'number' ? parsed.lastRemoteSavedAt : null);
-            setLastSavedSignature(typeof parsed.lastSavedSignature === 'string' ? parsed.lastSavedSignature : buildDraftSignature(recoveredDraft));
-            setDraftRecovered(true);
+            applyRecoveredDraft(
+                recoveredDraft,
+                typeof parsed.frameIndex === 'number' ? parsed.frameIndex : 0,
+                typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : null,
+                typeof parsed.lastRemoteSavedAt === 'number' ? parsed.lastRemoteSavedAt : null,
+                typeof parsed.lastSavedSignature === 'string' ? parsed.lastSavedSignature : buildDraftSignature(recoveredDraft),
+                true,
+            );
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokal taktikk.', draftError);
             window.localStorage.removeItem(TACTICS_DRAFT_KEY);
@@ -148,6 +178,69 @@ export function Tactics() {
     }, []);
 
     useEffect(() => {
+        if (!currentUser) {
+            setHasResolvedRemoteDraft(true);
+            return;
+        }
+
+        setHasResolvedRemoteDraft(false);
+
+        const draftRef = doc(db, 'users', currentUser.uid, 'appState', TACTICS_DRAFT_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            draftRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    setHasResolvedRemoteDraft(true);
+                    return;
+                }
+
+                const parsed = snapshot.data() as {
+                    draft?: unknown;
+                    frameIndex?: number;
+                    lastLocalSavedAt?: number;
+                    lastRemoteSavedAt?: number | null;
+                    lastSavedSignature?: string;
+                };
+                const storedDraft = parsed.draft ?? parsed;
+                const normalizedDraft = normalizeStoredTacticDocument(
+                    typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
+                        ? storedDraft.id
+                        : 'draft',
+                    storedDraft,
+                );
+                const recoveredDraft: TacticDraft = {
+                    ...normalizedDraft,
+                    id: typeof storedDraft === 'object' && storedDraft && 'id' in storedDraft && typeof storedDraft.id === 'string'
+                        ? storedDraft.id
+                        : undefined,
+                };
+                const remoteUpdatedAt = typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : 0;
+                const localUpdatedAt = lastLocalSavedAtRef.current ?? 0;
+
+                if (remoteUpdatedAt > localUpdatedAt) {
+                    applyRecoveredDraft(
+                        recoveredDraft,
+                        typeof parsed.frameIndex === 'number' ? parsed.frameIndex : 0,
+                        typeof parsed.lastLocalSavedAt === 'number' ? parsed.lastLocalSavedAt : null,
+                        typeof parsed.lastRemoteSavedAt === 'number' ? parsed.lastRemoteSavedAt : null,
+                        typeof parsed.lastSavedSignature === 'string' ? parsed.lastSavedSignature : buildDraftSignature(recoveredDraft),
+                        true,
+                    );
+                }
+
+                setHasResolvedRemoteDraft(true);
+            },
+            (draftError) => {
+                console.error('Kunne ikke hente taktikk-kladd fra skyen.', draftError);
+                setHasResolvedRemoteDraft(true);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
+
+    useEffect(() => {
+        if (!hasResolvedRemoteDraft) return;
         if (teams.length === 0) return;
         setDraft((current) => {
             const matchingTeam = findMatchingTeam(teams, current);
@@ -155,7 +248,7 @@ export function Tactics() {
             if (current.teamId || current.teamName) return current;
             return { ...current, teamId: teams[0].id, teamName: teams[0].name };
         });
-    }, [teams]);
+    }, [hasResolvedRemoteDraft, teams]);
 
     useEffect(() => {
         setFrameIndex((current) => Math.min(current, Math.max(draft.frames.length - 1, 0)));
@@ -170,16 +263,40 @@ export function Tactics() {
             return;
         }
 
+        if (draftSyncTimeoutRef.current) {
+            clearTimeout(draftSyncTimeoutRef.current);
+            draftSyncTimeoutRef.current = null;
+        }
+
         const savedAt = Date.now();
-        window.localStorage.setItem(TACTICS_DRAFT_KEY, JSON.stringify({
+        const nextStoredDraft = {
             draft,
             frameIndex,
             lastLocalSavedAt: savedAt,
             lastRemoteSavedAt,
             lastSavedSignature,
-        }));
+        };
+
+        window.localStorage.setItem(TACTICS_DRAFT_KEY, JSON.stringify(nextStoredDraft));
         setLastLocalSavedAt(savedAt);
-    }, [draft, frameIndex, hasHydratedDraft, lastRemoteSavedAt, lastSavedSignature]);
+
+        if (!currentUser || !hasResolvedRemoteDraft) {
+            return;
+        }
+
+        draftSyncTimeoutRef.current = setTimeout(() => {
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', TACTICS_DRAFT_REMOTE_DOC), nextStoredDraft).catch((draftError) => {
+                console.error('Kunne ikke synkronisere taktikk-kladd til skyen.', draftError);
+            });
+        }, 700);
+
+        return () => {
+            if (draftSyncTimeoutRef.current) {
+                clearTimeout(draftSyncTimeoutRef.current);
+                draftSyncTimeoutRef.current = null;
+            }
+        };
+    }, [currentUser, draft, frameIndex, hasHydratedDraft, hasResolvedRemoteDraft, lastRemoteSavedAt, lastSavedSignature]);
 
     useEffect(() => {
         if (!message || error) {

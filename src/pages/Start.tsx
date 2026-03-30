@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { Activity, ArrowRight, ClipboardList, History, Play, Users, WifiOff, type LucideIcon } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useAuth } from '../components/features/useAuth';
 import { useTeams } from '../hooks/useTeams';
 import { useTactics } from '../hooks/useTactics';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useMatchContext } from '../hooks/useMatch';
-
-const LIVE_STATS_DEFAULTS_KEY = 'handball-help-live-defaults:v1';
-
-interface LiveStatsDefaults {
-    homeTeamId?: string;
-    awayTeamId?: string;
-    updatedAt?: number;
-}
+import { db } from '../lib/firebase';
+import {
+    LIVE_STATS_DEFAULTS_KEY,
+    LIVE_STATS_DEFAULTS_REMOTE_DOC,
+    normalizeLiveStatsDefaults,
+    type LiveStatsDefaults,
+} from '../lib/liveStatsState';
 
 interface ActionCardProps {
     title: string;
@@ -170,6 +171,7 @@ const formatClock = (value: number | null) => (
 );
 
 export function Start() {
+    const { currentUser } = useAuth();
     const { teams, loading: teamsLoading } = useTeams();
     const { tactics, loading: tacticsLoading } = useTactics();
     const isOnline = useOnlineStatus();
@@ -196,16 +198,46 @@ export function Start() {
                 return;
             }
 
-            const parsedDefaults = JSON.parse(rawDefaults) as LiveStatsDefaults;
-            setRecentMatchDefaults({
-                homeTeamId: typeof parsedDefaults.homeTeamId === 'string' ? parsedDefaults.homeTeamId : undefined,
-                awayTeamId: typeof parsedDefaults.awayTeamId === 'string' ? parsedDefaults.awayTeamId : undefined,
-                updatedAt: typeof parsedDefaults.updatedAt === 'number' ? parsedDefaults.updatedAt : undefined,
-            });
+            const parsedDefaults = normalizeLiveStatsDefaults(JSON.parse(rawDefaults));
+            if (parsedDefaults) {
+                setRecentMatchDefaults(parsedDefaults);
+            }
         } catch (error) {
             console.error('Kunne ikke lese sist brukte kampvalg.', error);
         }
     }, []);
+
+    useEffect(() => {
+        if (!currentUser) {
+            return;
+        }
+
+        const defaultsRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            defaultsRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    return;
+                }
+
+                const remoteDefaults = normalizeLiveStatsDefaults(snapshot.data());
+                if (!remoteDefaults) {
+                    return;
+                }
+
+                setRecentMatchDefaults((current) => {
+                    const currentUpdatedAt = current?.updatedAt ?? 0;
+                    const remoteUpdatedAt = remoteDefaults.updatedAt ?? 0;
+                    return remoteUpdatedAt >= currentUpdatedAt ? remoteDefaults : current;
+                });
+            },
+            (error) => {
+                console.error('Kunne ikke hente sist brukte kampvalg fra skyen.', error);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
 
     const hasLiveDraft = (
         matchTime > 0 ||

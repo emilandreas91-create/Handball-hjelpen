@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { deleteDoc, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { useAuth } from '../components/features/useAuth';
 import {
     addOrIncrementLocation,
     createEmptyTeamState,
@@ -13,6 +15,7 @@ import {
     type TeamSide,
     type TeamState,
 } from '../lib/matchData';
+import { db } from '../lib/firebase';
 
 interface MatchContextType {
     matchTime: number;
@@ -41,12 +44,21 @@ interface MatchContextType {
 
 const MatchContext = createContext<MatchContextType | undefined>(undefined);
 const LIVE_MATCH_STORAGE_KEY = 'handball-help-live-match:v1';
+const LIVE_MATCH_REMOTE_DOC = 'liveMatchDraft';
+
+interface StoredLiveMatchDraft extends MatchData {
+    updatedAt?: number;
+}
 
 export function MatchProvider({ children }: { children: React.ReactNode }) {
+    const { currentUser } = useAuth();
     const [matchTime, setMatchTime] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const [period, setPeriod] = useState(1);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const remoteSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRemoteSyncAtRef = useRef(0);
+    const lastDraftSavedAtRef = useRef<number | null>(null);
 
     const [homeState, setHomeState] = useState<TeamState>(createEmptyTeamState());
     const [awayState, setAwayState] = useState<TeamState>(createEmptyTeamState());
@@ -54,6 +66,7 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [draftRecovered, setDraftRecovered] = useState(false);
     const [lastDraftSavedAt, setLastDraftSavedAt] = useState<number | null>(null);
     const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
+    const [hasResolvedRemoteDraft, setHasResolvedRemoteDraft] = useState(false);
 
     const appendHistory = (
         side: TeamSide,
@@ -72,6 +85,21 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
             },
         ]);
     };
+
+    const applyStoredDraft = (draft: StoredLiveMatchDraft, recovered: boolean) => {
+        setMatchTime(Math.max(0, Math.round(draft.matchTime || 0)));
+        setPeriod(Math.max(1, Math.round(draft.period || 1)));
+        setHomeState(normalizeTeamState(draft.homeState, draft.homeState?.score));
+        setAwayState(normalizeTeamState(draft.awayState, draft.awayState?.score));
+        setHistory(normalizeHistory(draft.history));
+        setIsRunning(false);
+        setDraftRecovered(recovered);
+        setLastDraftSavedAt(typeof draft.updatedAt === 'number' ? draft.updatedAt : null);
+    };
+
+    useEffect(() => {
+        lastDraftSavedAtRef.current = lastDraftSavedAt;
+    }, [lastDraftSavedAt]);
 
     useEffect(() => {
         if (isRunning) {
@@ -103,15 +131,8 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
                 return;
             }
 
-            const parsedDraft = JSON.parse(rawDraft) as MatchData & { updatedAt?: number };
-
-            setMatchTime(Math.max(0, Math.round(parsedDraft.matchTime || 0)));
-            setPeriod(Math.max(1, Math.round(parsedDraft.period || 1)));
-            setHomeState(normalizeTeamState(parsedDraft.homeState, parsedDraft.homeState?.score));
-            setAwayState(normalizeTeamState(parsedDraft.awayState, parsedDraft.awayState?.score));
-            setHistory(normalizeHistory(parsedDraft.history));
-            setDraftRecovered(true);
-            setLastDraftSavedAt(typeof parsedDraft.updatedAt === 'number' ? parsedDraft.updatedAt : null);
+            const parsedDraft = JSON.parse(rawDraft) as StoredLiveMatchDraft;
+            applyStoredDraft(parsedDraft, true);
         } catch (draftError) {
             console.error('Kunne ikke gjenopprette lokal kampkladd.', draftError);
             window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
@@ -121,8 +142,49 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     useEffect(() => {
+        if (!currentUser) {
+            setHasResolvedRemoteDraft(true);
+            return;
+        }
+
+        setHasResolvedRemoteDraft(false);
+
+        const draftRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC);
+        const unsubscribe = onSnapshot(
+            draftRef,
+            (snapshot) => {
+                if (!snapshot.exists()) {
+                    setHasResolvedRemoteDraft(true);
+                    return;
+                }
+
+                const remoteDraft = snapshot.data() as StoredLiveMatchDraft;
+                const remoteUpdatedAt = typeof remoteDraft.updatedAt === 'number' ? remoteDraft.updatedAt : 0;
+                const localUpdatedAt = lastDraftSavedAtRef.current ?? 0;
+
+                if (remoteUpdatedAt > localUpdatedAt) {
+                    applyStoredDraft(remoteDraft, true);
+                }
+
+                setHasResolvedRemoteDraft(true);
+            },
+            (draftError) => {
+                console.error('Kunne ikke hente kampkladd fra skyen.', draftError);
+                setHasResolvedRemoteDraft(true);
+            },
+        );
+
+        return unsubscribe;
+    }, [currentUser]);
+
+    useEffect(() => {
         if (!hasHydratedDraft || typeof window === 'undefined') {
             return;
+        }
+
+        if (remoteSyncTimeoutRef.current) {
+            clearTimeout(remoteSyncTimeoutRef.current);
+            remoteSyncTimeoutRef.current = null;
         }
 
         const hasDraftContent = (
@@ -138,20 +200,56 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
         if (!hasDraftContent) {
             window.localStorage.removeItem(LIVE_MATCH_STORAGE_KEY);
             setLastDraftSavedAt(null);
+
+            if (currentUser && hasResolvedRemoteDraft) {
+                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC)).catch((draftError) => {
+                    console.error('Kunne ikke fjerne kampkladd fra skyen.', draftError);
+                });
+            }
+
             return;
         }
 
         const updatedAt = Date.now();
-        window.localStorage.setItem(LIVE_MATCH_STORAGE_KEY, JSON.stringify({
+        const nextDraft: StoredLiveMatchDraft = {
             matchTime,
             period,
             homeState,
             awayState,
             history,
             updatedAt,
-        }));
+        };
+
+        window.localStorage.setItem(LIVE_MATCH_STORAGE_KEY, JSON.stringify(nextDraft));
         setLastDraftSavedAt(updatedAt);
-    }, [awayState, hasHydratedDraft, history, homeState, matchTime, period]);
+
+        if (!currentUser || !hasResolvedRemoteDraft) {
+            return;
+        }
+
+        const syncDelayMs = isRunning ? 4000 : 1200;
+        const elapsedSinceRemoteSync = Date.now() - lastRemoteSyncAtRef.current;
+        const syncRemoteDraft = () => {
+            lastRemoteSyncAtRef.current = Date.now();
+            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_MATCH_REMOTE_DOC), nextDraft).catch((draftError) => {
+                console.error('Kunne ikke synkronisere kampkladd til skyen.', draftError);
+            });
+        };
+
+        if (elapsedSinceRemoteSync >= syncDelayMs) {
+            syncRemoteDraft();
+            return;
+        }
+
+        remoteSyncTimeoutRef.current = setTimeout(syncRemoteDraft, syncDelayMs - elapsedSinceRemoteSync);
+
+        return () => {
+            if (remoteSyncTimeoutRef.current) {
+                clearTimeout(remoteSyncTimeoutRef.current);
+                remoteSyncTimeoutRef.current = null;
+            }
+        };
+    }, [awayState, currentUser, hasHydratedDraft, hasResolvedRemoteDraft, history, homeState, isRunning, matchTime, period]);
 
     const toggleTimer = () => setIsRunning((current) => !current);
 
