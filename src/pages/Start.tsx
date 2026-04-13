@@ -261,12 +261,13 @@ export function Start() {
 
     const latestTactic = tactics[0] ?? null;
     const recentTeamFromMatch = [recentMatchDefaults?.homeTeamId, recentMatchDefaults?.awayTeamId]
-        .find((teamName) => typeof teamName === 'string' && teams.some((team) => team.name === teamName)) ?? null;
-    const recentTeamName = recentTeamFromMatch || latestTactic?.teamName || teams[0]?.name || null;
+        .map((teamId) => typeof teamId === 'string' ? teams.find((team) => team.id === teamId) : undefined)
+        .find((team) => team !== undefined) ?? null;
+    const recentTeamName = recentTeamFromMatch?.name || latestTactic?.teamName || teams[0]?.name || null;
     const recentTeamDetail = recentTeamFromMatch
         ? recentMatchDefaultsSource === 'cloud'
             ? 'Sist valgt i kampoppsettet og bekreftet i sky.'
-            : 'Sist valgt i kampoppsettet pÃ¥ denne enheten.'
+            : 'Sist valgt i kampoppsettet på denne enheten.'
         : latestTactic?.teamName
             ? `Fra taktikken "${latestTactic.name}".`
             : teams.length > 0

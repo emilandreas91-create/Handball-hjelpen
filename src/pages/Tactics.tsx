@@ -138,50 +138,30 @@ export function Tactics() {
     const localStatusText = formattedLocalTime
         ? `Sist lagret lokalt ${formattedLocalTime}.`
         : 'Kladden oppdateres automatisk mens du jobber.';
-    const legacyRemoteStatusTitle = !isOnline
-        ? 'Offline'
-        : isSaving
-            ? 'Lagrer nå'
-            : draft.id
-                ? hasDraftChanges
-                    ? 'Nye endringer ikke lagret'
-                    : formattedRemoteTime
-                        ? `Sist lagret ${formattedRemoteTime}`
-                        : 'Lagret'
-                : 'Ikke lagret enda';
-    const legacyRemoteStatusText = !isOnline
-        ? 'Du kan fortsette å tegne. Lagre til biblioteket når nettet er tilbake.'
-        : draft.id
-            ? hasDraftChanges
-                ? 'Trykk Lagre for å oppdatere den lagrede taktikken.'
-                : 'Taktikken ligger klar i biblioteket.'
-            : 'Denne taktikken finnes foreløpig bare som lokal kladd.';
-    void legacyRemoteStatusTitle;
-    void legacyRemoteStatusText;
     const remoteStatusTitle = !lastLocalSavedAt
         ? 'Ikke lagret'
         : !currentUser || !isOnline
             ? 'Bare lokalt'
             : draftCloudSyncState === 'error'
-                ? 'Kun lokalt akkurat nÃ¥'
+                ? 'Kun lokalt akkurat nå'
                 : draftCloudSyncState === 'saving'
-                    ? 'Lagrer nÃ¥'
+                    ? 'Lagrer nå'
                     : formattedRemoteTime
                         ? `Bekreftet i sky ${formattedRemoteTime}`
                         : 'Bare lokalt';
     const remoteStatusText = !lastLocalSavedAt
-        ? 'Kladden opprettes automatisk nÃ¥r du begynner Ã¥ jobbe.'
+        ? 'Kladden opprettes automatisk når du begynner å jobbe.'
         : !currentUser
-            ? 'Logg inn for Ã¥ synke kladden mellom enheter.'
+            ? 'Logg inn for å synke kladden mellom enheter.'
             : !isOnline
-                ? 'Kladden finnes lokalt og sendes til skyen nÃ¥r nettet er tilbake.'
+                ? 'Kladden finnes lokalt og sendes til skyen når nettet er tilbake.'
                 : draftCloudSyncState === 'error'
                     ? 'Forrige sky-synk feilet. Du kan fortsette, og den lokale kladden er beholdt.'
                     : draftCloudSyncState === 'saving'
-                        ? 'Vi venter pÃ¥ backend-bekreftelse fÃ¸r kladden markeres som lagret i sky.'
+                        ? 'Vi venter på backend-bekreftelse før kladden markeres som lagret i sky.'
                         : formattedRemoteTime
-                            ? 'Denne kladden er bekreftet lagret for denne brukeren og kan hentes tilbake pÃ¥ andre enheter.'
-                            : 'Denne taktikken finnes forelÃ¸pig bare som lokal kladd.';
+                            ? 'Denne kladden er bekreftet lagret for denne brukeren og kan hentes tilbake på andre enheter.'
+                            : 'Denne taktikken finnes foreløpig bare som lokal kladd.';
     const saveButtonLabel = isSaving
         ? 'Lagrer...'
         : !isOnline

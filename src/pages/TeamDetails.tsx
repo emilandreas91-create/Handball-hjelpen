@@ -5,12 +5,17 @@ import {
     AlertTriangle,
     ArrowLeft,
     ArrowRight,
+    CalendarPlus,
+    CheckCircle2,
+    ChevronRight,
     ClipboardList,
+    ClipboardPaste,
     Minus,
     Shield,
     Target,
     TrendingDown,
     TrendingUp,
+    X,
 } from 'lucide-react';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -32,7 +37,6 @@ import { parseScheduleText } from '../lib/icalParser';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/useAuth';
-import { X, CalendarPlus, CheckCircle2, ClipboardPaste, ChevronRight } from 'lucide-react';
 
 
 type ViewMode = 'general' | 'goalkeeper';

@@ -776,25 +776,25 @@ export function Stats() {
         : !currentUser || !isOnline
             ? 'Bare lokalt'
             : hasAnyCloudSyncError
-                ? 'Kun lokalt akkurat nÃ¥'
+                ? 'Kun lokalt akkurat nå'
                 : isAnyCloudSyncSaving
-                    ? 'Lagrer nÃ¥'
+                    ? 'Lagrer nå'
                     : formattedCloudSyncTime
                         ? `Bekreftet i sky ${formattedCloudSyncTime}`
                         : 'Bare lokalt';
     const cloudStatusHint = !hasAnyPersistedContent
-        ? 'Sky-synk starter nÃ¥r du har en aktiv kladd eller et lagvalg.'
+        ? 'Sky-synk starter når du har en aktiv kladd eller et lagvalg.'
         : !currentUser
-            ? 'Logg inn for Ã¥ synke kladd og kampoppsett mellom enheter.'
+            ? 'Logg inn for å synke kladd og kampoppsett mellom enheter.'
             : !isOnline
-                ? 'Endringene ligger trygt lokalt og sendes nÃ¥r nettet er tilbake.'
+                ? 'Endringene ligger trygt lokalt og sendes når nettet er tilbake.'
                 : hasAnyCloudSyncError
                     ? 'Forrige sky-synk feilet. Du kan fortsette uten at siden stopper, og lokal kladd er beholdt.'
                     : isAnyCloudSyncSaving
-                        ? 'Vi venter pÃ¥ backend-bekreftelse fÃ¸r kladden merkes som lagret i sky.'
+                        ? 'Vi venter på backend-bekreftelse før kladden merkes som lagret i sky.'
                         : formattedCloudSyncTime
                             ? 'Kladd, kampoppsett og sist brukte lagvalg er bekreftet lagret for denne brukeren.'
-                            : 'Du har lokale endringer, men ingenting er bekreftet lagret i sky ennÃ¥.';
+                            : 'Du har lokale endringer, men ingenting er bekreftet lagret i sky ennå.';
     const saveButtonLabel = saveState === 'saving'
         ? 'Lagrer kamp...'
         : !isOnline
