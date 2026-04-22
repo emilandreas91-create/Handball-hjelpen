@@ -966,11 +966,9 @@ export function Stats() {
                 </div>
 
                 <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
-                    <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">Live kamp</p>
-                    <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
+                    <h1 className="text-4xl font-black tracking-tight text-white md:text-5xl">
                         Klargjør kampen
                     </h1>
-                    <p className="mt-3 text-base text-gray-300">Velg lag og start når du er klar.</p>
 
                     <div className="mt-6 grid gap-4 md:grid-cols-2">
                         <label className="block">

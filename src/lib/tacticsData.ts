@@ -290,6 +290,7 @@ export const duplicateTokensAcrossFrames = (frames: TacticFrame[], token: Tactic
 export const removeTokenAcrossFrames = (frames: TacticFrame[], tokenId: string) => frames.map((frame) => ({
     ...frame,
     tokens: frame.tokens.filter((token) => token.id !== tokenId),
+    paths: frame.paths.filter((path) => path.id !== `auto_${tokenId}`),
 }));
 
 export const updateFrameTokenPosition = (
