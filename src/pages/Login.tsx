@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Loader2, WifiOff } from 'lucide-react';
-import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithRedirect } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { auth, googleProvider } from '../lib/firebase';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
@@ -45,12 +45,10 @@ export function Login() {
 
         try {
             setIsGoogleSubmitting(true);
-            await signInWithPopup(auth, googleProvider);
-            navigate('/start');
+            await signInWithRedirect(auth, googleProvider);
         } catch (err) {
             setError('Kunne ikke logge inn med Google.');
             console.error(err);
-        } finally {
             setIsGoogleSubmitting(false);
         }
     };
