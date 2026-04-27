@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Popup-prototype – skuddregistrering</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --home: #00f3ff;
+      --away: #ff6600;
+      --card: #0c1520;
+      --bg: #080e18;
+    }
+    body { background: var(--bg); color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; padding-bottom: 80px; }
+
+    /* NAV */
+    nav { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,0.07); background: rgba(8,14,24,0.97); position: sticky; top: 0; z-index: 50; }
+    .logo { font-size: 13px; font-weight: 700; color: var(--home); letter-spacing: 0.06em; }
+    .nav-links { display: flex; gap: 6px; }
+    .nav-link { font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 999px; color: #94a3b8; text-decoration: none; cursor: pointer; }
+    .nav-link.active { background: rgba(0,243,255,0.12); color: var(--home); }
+
+    main { max-width: 860px; margin: 0 auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+    /* SCOREBOARD */
+    .scoreboard { background: var(--card); border: 1px solid rgba(255,255,255,0.1); border-radius: 26px; padding: 14px 16px; position: relative; overflow: hidden; }
+    .scoreboard::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--home) 0%, #fff 50%, var(--away) 100%); }
+    .scoreboard-grid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; text-align: center; }
+    .team-name { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 0; }
+    .score-home { font-size: 64px; font-weight: 900; color: var(--home); line-height: 1; }
+    .score-away { font-size: 64px; font-weight: 900; color: var(--away); line-height: 1; }
+    .clock-col { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 96px; }
+    .clock { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; background: #000; border: 1px solid rgba(255,255,255,0.2); border-radius: 14px; padding: 8px 12px; width: 100%; text-align: center; }
+    .period-lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #64748b; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 4px 10px; }
+
+    /* PANELS */
+    .section-label { font-size: 10px; font-weight: 700; letter-spacing: 0.25em; text-transform: uppercase; color: #1e293b; margin-bottom: 6px; padding-left: 4px; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .panel { background: var(--card); border: 2px solid rgba(255,255,255,0.07); border-radius: 22px; padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .panel.home { border-color: rgba(0,243,255,0.22); }
+    .panel.away { border-color: rgba(255,102,0,0.22); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+    .panel-label { font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; }
+    .panel-label.home { color: rgba(0,243,255,0.7); }
+    .panel-label.away { color: rgba(255,102,0,0.7); }
+    .panel-reg { font-size: 11px; font-weight: 700; color: #334155; }
+
+    .stat-btn { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 11px; border-radius: 13px; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.04); color: #f1f5f9; font-size: 13px; font-weight: 700; cursor: pointer; user-select: none; transition: background 0.12s, transform 0.1s; }
+    .stat-btn:hover { background: rgba(255,255,255,0.08); }
+    .stat-btn:active { transform: scale(0.97); }
+    .stat-btn .left { display: flex; align-items: center; gap: 6px; }
+    .stat-count { font-size: 16px; font-weight: 900; min-width: 22px; text-align: right; }
+    .stat-count.home { color: rgba(0,243,255,0.7); }
+    .stat-count.away { color: rgba(255,102,0,0.7); }
+    .divider { height: 1px; background: rgba(255,255,255,0.05); }
+    .skudd-home { background: linear-gradient(135deg,rgba(0,243,255,0.14),rgba(0,180,200,0.07)); border-color: rgba(0,243,255,0.26); font-size: 14px; padding: 14px 12px; }
+    .skudd-home:hover { background: linear-gradient(135deg,rgba(0,243,255,0.24),rgba(0,180,200,0.14)); }
+    .skudd-away { background: linear-gradient(135deg,rgba(255,102,0,0.14),rgba(200,80,0,0.07)); border-color: rgba(255,102,0,0.26); font-size: 14px; padding: 14px 12px; }
+    .skudd-away:hover { background: linear-gradient(135deg,rgba(255,102,0,0.24),rgba(200,80,0,0.14)); }
+
+    .last-event { text-align: center; font-size: 12px; color: #334155; }
+    .last-event span { color: #64748b; font-weight: 600; }
+
+    /* MOBILE BAR */
+    .mobile-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(8,14,24,0.97); border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 14px 14px; display: flex; gap: 8px; z-index: 100; }
+    .mb-btn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 10px 6px; border-radius: 13px; background: rgba(255,255,255,0.05); border: none; color: #94a3b8; font-size: 10px; font-weight: 700; cursor: pointer; transition: background 0.12s; }
+    .mb-btn:active { background: rgba(255,255,255,0.12); }
+    .mb-btn.primary { background: rgba(34,197,94,0.14); color: #86efac; }
+    .mb-icon { font-size: 19px; }
+
+    /* ── MODAL OVERLAY ── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(4,8,18,0.92); backdrop-filter: blur(8px);
+      display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+      padding: 0; opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.visible { opacity: 1; pointer-events: all; }
+
+    .modal-box {
+      width: 100%; max-width: 520px;
+      background: #0d1a2a; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 28px 28px 0 0; padding: 20px 20px 32px;
+      display: flex; flex-direction: column; gap: 16px;
+      transform: translateY(40px); transition: transform 0.25s cubic-bezier(0.22,1,0.36,1);
+      max-height: 92vh; overflow-y: auto;
+    }
+    .modal-overlay.visible .modal-box { transform: translateY(0); }
+
+    /* Desktop: centered box */
+    @media (min-width: 600px) {
+      .modal-overlay { justify-content: center; padding: 16px; }
+      .modal-box { border-radius: 28px; transform: translateY(16px) scale(0.97); padding-bottom: 20px; }
+      .modal-overlay.visible .modal-box { transform: translateY(0) scale(1); }
+    }
+
+    .modal-handle { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); margin: 0 auto -8px; flex-shrink: 0; }
+    @media (min-width: 600px) { .modal-handle { display: none; } }
+
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; }
+    .modal-meta { display: flex; flex-direction: column; gap: 3px; }
+    .modal-step-label { font-size: 10px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #475569; }
+    .modal-title { font-size: 18px; font-weight: 800; }
+    .modal-title.home { color: var(--home); }
+    .modal-title.away { color: var(--away); }
+    .modal-close { width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #64748b; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.12s; line-height: 1; }
+    .modal-close:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+    /* Step indicator */
+    .step-indicator { display: flex; align-items: center; gap: 6px; }
+    .step-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.1); transition: background 0.2s; }
+    .step-dot.active { background: var(--home); }
+    .step-dot.away.active { background: var(--away); }
+    .step-dot.done { background: rgba(255,255,255,0.3); }
+    .step-line { flex: 1; height: 2px; background: rgba(255,255,255,0.07); border-radius: 1px; max-width: 32px; }
+
+    /* COURT (step 1) */
+    .court-step { display: flex; flex-direction: column; gap: 10px; }
+    .court-hint { font-size: 12px; font-weight: 600; color: #475569; text-align: center; }
+    .court-wrap {
+      position: relative; width: 100%; aspect-ratio: 300/210;
+      border-radius: 16px; overflow: hidden; background: #0e5525;
+      border: 1px solid #1a6a32; cursor: crosshair;
+      transition: border-color 0.15s;
+    }
+    .court-wrap:hover { border-color: rgba(255,255,255,0.25); }
+    .court-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .pending-dot {
+      position: absolute; width: 20px; height: 20px; border-radius: 50%;
+      border: 3px solid #fff; transform: translate(-50%,-50%);
+      pointer-events: none; display: none;
+      box-shadow: 0 0 0 5px rgba(255,255,255,0.2);
+    }
+    .pending-dot.home { border-color: var(--home); box-shadow: 0 0 0 5px rgba(0,243,255,0.15); }
+    .pending-dot.away { border-color: var(--away); box-shadow: 0 0 0 5px rgba(255,102,0,0.15); }
+
+    /* OUTCOME (step 2) */
+    .outcome-step { display: flex; flex-direction: column; gap: 10px; }
+    .outcome-pos-badge {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; padding: 10px 14px; font-size: 12px; color: #64748b;
+    }
+    .outcome-pos-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .outcome-pos-dot.home { background: var(--home); }
+    .outcome-pos-dot.away { background: var(--away); }
+    .outcome-pos-text { font-weight: 700; color: #94a3b8; }
+    .outcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .outcome-btn {
+      padding: 18px 10px; border-radius: 18px; border: none;
+      font-weight: 900; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      transition: filter 0.1s, transform 0.1s;
+    }
+    .outcome-btn:active { transform: scale(0.96); }
+    .outcome-btn .o-icon { font-size: 28px; }
+    .outcome-btn .o-label { font-size: 13px; font-weight: 800; letter-spacing: 0.04em; }
+    .outcome-btn.goal { background: linear-gradient(135deg,#16a34a,#15803d); color: #fff; box-shadow: 0 6px 20px rgba(22,163,74,0.3); }
+    .outcome-btn.goal:hover { filter: brightness(1.12); }
+    .outcome-btn.save { background: linear-gradient(135deg,#dc2626,#b91c1c); color: #fff; box-shadow: 0 6px 20px rgba(220,38,38,0.3); }
+    .outcome-btn.save:hover { filter: brightness(1.12); }
+    .outcome-btn.miss { background: linear-gradient(135deg,#475569,#334155); color: #cbd5e1; box-shadow: 0 4px 14px rgba(0,0,0,0.25); grid-column: 1 / -1; flex-direction: row; gap: 10px; justify-content: center; padding: 14px 10px; }
+    .outcome-btn.miss:hover { filter: brightness(1.15); }
+    .back-btn { background: none; border: none; color: #475569; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 0; text-align: center; width: 100%; }
+    .back-btn:hover { color: #94a3b8; }
+
+    /* GOAL (step 3) */
+    .goal-step { display: flex; flex-direction: column; gap: 10px; }
+    .goal-wrap {
+      position: relative; width: 100%; aspect-ratio: 3/2;
+      border-radius: 14px; overflow: hidden; background: #0a1215;
+      border: 2px solid rgba(34,197,94,0.4); cursor: crosshair;
+      transition: border-color 0.15s;
+    }
+    #step-goal[data-outcome="save"] .goal-wrap { border-color: rgba(239,68,68,0.4); }
+    #step-goal[data-outcome="save"] .goal-wrap:hover { border-color: rgba(239,68,68,0.7); }
+    #step-goal[data-outcome="goal"]  .goal-wrap:hover { border-color: rgba(34,197,94,0.7); }
+    .goal-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .goal-hint { font-size: 12px; font-weight: 600; color: #475569; text-align: center; }
+
+    /* goal-step-badge variants via data-outcome */
+    #step-goal[data-outcome="goal"] .outcome-pos-badge  { border-color:rgba(34,197,94,0.2); background:rgba(34,197,94,0.05); }
+    #step-goal[data-outcome="save"] .outcome-pos-badge  { border-color:rgba(239,68,68,0.2); background:rgba(239,68,68,0.05); }
+    #step-goal[data-outcome="goal"] .outcome-pos-text   { color: #86efac; }
+    #step-goal[data-outcome="save"] .outcome-pos-text   { color: #fca5a5; }
+    #step-goal[data-outcome="goal"] .goal-dot-marker    { border-color: #86efac; box-shadow: 0 0 0 5px rgba(34,197,94,0.15); }
+    #step-goal[data-outcome="save"] .goal-dot-marker    { border-color: #fca5a5; box-shadow: 0 0 0 5px rgba(239,68,68,0.15); }
+
+    /* goal SVG border color via data-outcome on parent */
+    #step-goal[data-outcome="goal"] #goal-border { stroke: rgba(34,197,94,0.5); }
+    #step-goal[data-outcome="save"] #goal-border { stroke: rgba(239,68,68,0.5); }
+
+    .skip-btn { background: none; border: 1px dashed rgba(255,255,255,0.1); border-radius: 10px; color: #475569; font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px; text-align: center; width: 100%; transition: color 0.12s, border-color 0.12s; }
+    .skip-btn:hover { color: #94a3b8; border-color: rgba(255,255,255,0.2); }
+
+    /* CONFIRM / FLASH */
+    .confirm-flash {
+      position: fixed; inset: 0; z-index: 300;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .confirm-flash.visible { opacity: 1; }
+    .confirm-badge {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      background: rgba(13,26,42,0.97); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 22px; padding: 24px 32px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    }
+    .confirm-icon { font-size: 42px; }
+    .confirm-text { font-size: 15px; font-weight: 800; color: #fff; }
+    .confirm-sub { font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">Handball-hjelpen</span>
+  <div class="nav-links">
+    <a class="nav-link" href="#">Start</a>
+    <a class="nav-link active" href="#">Kamp</a>
+    <a class="nav-link" href="#">Lag</a>
+    <a class="nav-link" href="#">Taktikk</a>
+  </div>
+</nav>
+
+<main>
+
+  <!-- SCOREBOARD -->
+  <div class="scoreboard">
+    <div class="scoreboard-grid">
+      <div style="text-align:center">
+        <div class="team-name" style="color:var(--home)">Bjarg</div>
+        <div class="score-home" id="home-score">17</div>
+      </div>
+      <div class="clock-col">
+        <div class="clock">34:12</div>
+        <div class="period-lbl">2. OMG</div>
+      </div>
+      <div style="text-align:center">
+        <div class="team-name" style="color:var(--away)">Oppsal</div>
+        <div class="score-away" id="away-score">14</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PANELS -->
+  <div>
+    <div class="section-label">Registrer hendelse</div>
+    <div class="panels">
+
+      <!-- HOME -->
+      <div class="panel home">
+        <div class="panel-head">
+          <span class="panel-label home">Bjarg</span>
+          <span class="panel-reg" id="home-reg">32 reg.</span>
+        </div>
+        <button class="stat-btn skudd-home" onclick="openModal('home')">
+          <span class="left">🎯 Skudd</span>
+          <span class="stat-count home" id="home-shots">17</span>
+        </button>
+        <div class="divider"></div>
+        <button class="stat-btn" onclick="quickStat('home','Teknisk feil')">
+          <span class="left"><span>🟨</span> Teknisk</span>
+          <span class="stat-count home" id="home-tech">4</span>
+        </button>
+        <button class="stat-btn" onclick="quickStat('home','Utvisning')">
+          <span class="left"><span>🟥</span> Utvisning</span>
+          <span class="stat-count home" id="home-utv">1</span>
+        </button>
+      </div>
+
+      <!-- AWAY -->
+      <div class="panel away">
+        <div class="panel-head">
+          <span class="panel-label away">Oppsal</span>
+          <span class="panel-reg" id="away-reg">29 reg.</span>
+        </div>
+        <button class="stat-btn skudd-away" onclick="openModal('away')">
+          <span class="left">🎯 Skudd</span>
+          <span class="stat-count away" id="away-shots">14</span>
+        </button>
+        <div class="divider"></div>
+        <button class="stat-btn" onclick="quickStat('away','Teknisk feil')">
+          <span class="left"><span>🟨</span> Teknisk</span>
+          <span class="stat-count away" id="away-tech">3</span>
+        </button>
+        <button class="stat-btn" onclick="quickStat('away','Utvisning')">
+          <span class="left"><span>🟥</span> Utvisning</span>
+          <span class="stat-count away" id="away-utv">2</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="last-event">Siste: <span id="last-event">–</span></div>
+
+</main>
+
+<!-- MOBILE BAR -->
+<div class="mobile-bar">
+  <button class="mb-btn" onclick="undo()"><span class="mb-icon">↩</span><span>Angre</span></button>
+  <button class="mb-btn"><span class="mb-icon">▶</span><span>34:12</span></button>
+  <button class="mb-btn primary"><span class="mb-icon">💾</span><span>Lagre</span></button>
+</div>
+
+<!-- ── MODAL ── -->
+<div class="modal-overlay" id="modal" onclick="handleOverlayClick(event)">
+  <div class="modal-box" id="modal-box">
+    <div class="modal-handle"></div>
+
+    <!-- HEAD -->
+    <div class="modal-head">
+      <div class="modal-meta">
+        <div class="modal-step-label" id="modal-step-label">Steg 1 av 2 – Posisjon</div>
+        <div class="modal-title home" id="modal-title">Bjarg – Skudd</div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+
+    <!-- STEP INDICATOR -->
+    <div class="step-indicator" id="step-indicator">
+      <div class="step-dot active" id="dot-1"></div>
+      <div class="step-line"></div>
+      <div class="step-dot" id="dot-2"></div>
+      <div class="step-line" id="step-line-2"></div>
+      <div class="step-dot" id="dot-3"></div>
+    </div>
+
+    <!-- STEP 1: BANE -->
+    <div class="court-step" id="step-court">
+      <div class="court-hint">Trykk på banen der skuddet ble avsluttet fra</div>
+      <div class="court-wrap" id="court-wrap" onclick="pickCourtPos(event)">
+        <svg viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg">
+          <defs><clipPath id="sc"><rect x="0" y="0" width="300" height="210"/></clipPath></defs>
+          <rect width="300" height="210" fill="#0e5525"/>
+          <rect x="0" y="0" width="150" height="210" fill="rgba(0,0,0,0.05)"/>
+          <!-- mål -->
+          <rect x="126" y="0" width="48" height="12" fill="rgba(255,255,255,0.12)"/>
+          <line x1="0" y1="0" x2="126" y2="0" stroke="rgba(255,255,255,0.55)" stroke-width="2"/>
+          <line x1="174" y1="0" x2="300" y2="0" stroke="rgba(255,255,255,0.55)" stroke-width="2"/>
+          <rect x="123" y="0" width="4" height="12" fill="white"/>
+          <rect x="173" y="0" width="4" height="12" fill="white"/>
+          <line x1="0" y1="12" x2="300" y2="12" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/>
+          <line x1="0" y1="0" x2="0" y2="210" stroke="rgba(255,255,255,0.55)" stroke-width="2"/>
+          <line x1="300" y1="0" x2="300" y2="210" stroke="rgba(255,255,255,0.55)" stroke-width="2"/>
+          <line x1="0" y1="210" x2="300" y2="210" stroke="rgba(255,255,255,0.3)" stroke-width="1.5" stroke-dasharray="8,5"/>
+          <!-- soner -->
+          <path d="M 36,12 A 90,90 0 0 1 126,102 L 174,102 A 90,90 0 0 1 264,12 Z" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" clip-path="url(#sc)"/>
+          <path d="M -9,12 A 135,135 0 0 1 126,147 L 174,147 A 135,135 0 0 1 309,12" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.5" stroke-dasharray="7,4" clip-path="url(#sc)"/>
+          <circle cx="150" cy="117" r="3" fill="rgba(255,255,255,0.55)"/>
+          <!-- sone-labels -->
+          <text x="150" y="68" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.25)" font-family="sans-serif" font-weight="600">6m</text>
+          <text x="150" y="121" text-anchor="middle" font-size="7" fill="rgba(255,255,255,0.3)" font-family="sans-serif">7m</text>
+          <text x="150" y="152" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.18)" font-family="sans-serif">9m</text>
+          <!-- fløy-labels -->
+          <text x="18" y="190" font-size="8" fill="rgba(255,255,255,0.28)" font-family="sans-serif" font-weight="700">V.FLØY</text>
+          <text x="262" y="190" text-anchor="end" font-size="8" fill="rgba(255,255,255,0.28)" font-family="sans-serif" font-weight="700">H.FLØY</text>
+          <!-- angrepsretning-pil -->
+          <text x="150" y="206" text-anchor="middle" font-size="7" fill="rgba(255,255,255,0.18)" font-family="sans-serif">DIN HALVDEL</text>
+          <polygon points="146,18 154,18 150,10" fill="rgba(255,255,255,0.5)"/>
+        </svg>
+        <div class="pending-dot home" id="pending-dot"></div>
+      </div>
+    </div>
+
+    <!-- STEP 2: UTFALL -->
+    <div class="outcome-step" id="step-outcome" style="display:none">
+      <div class="outcome-pos-badge">
+        <div class="outcome-pos-dot home" id="pos-dot"></div>
+        <span class="outcome-pos-text" id="pos-text">Posisjon valgt</span>
+        <span style="margin-left:auto;font-size:11px;color:#334155">Steg 2</span>
+      </div>
+      <div class="outcome-grid">
+        <button class="outcome-btn goal" onclick="pickOutcome('goal')">
+          <span class="o-icon">⚽</span>
+          <span class="o-label">MÅL</span>
+        </button>
+        <button class="outcome-btn save" onclick="pickOutcome('save')">
+          <span class="o-icon">🧤</span>
+          <span class="o-label">REDNING</span>
+        </button>
+        <button class="outcome-btn miss" onclick="pickOutcome('miss')">
+          <span class="o-icon">💨</span>
+          <span class="o-label">BOM</span>
+        </button>
+      </div>
+      <button class="back-btn" onclick="goBack(1)">← Tilbake til posisjon</button>
+    </div>
+
+    <!-- STEP 3: MÅL eller REDNING – plassering i mål -->
+    <div class="goal-step" id="step-goal" style="display:none">
+      <div class="outcome-pos-badge" id="goal-step-badge">
+        <span style="font-size:16px" id="goal-step-icon">⚽</span>
+        <span class="outcome-pos-text" id="goal-step-text">MÅL – marker i målet</span>
+        <span style="margin-left:auto;font-size:11px;color:#334155">Steg 3</span>
+      </div>
+      <div class="goal-hint" id="goal-hint">Trykk der ballen gikk inn</div>
+      <div class="goal-wrap" id="goal-wrap" onclick="pickGoalPos(event)">
+        <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="net" width="20" height="20" patternUnits="userSpaceOnUse">
+              <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.8"/>
+            </pattern>
+          </defs>
+          <rect width="300" height="200" fill="#0a1215"/>
+          <rect width="300" height="200" fill="url(#net)"/>
+          <rect id="goal-border" x="2" y="2" width="296" height="196" fill="none" stroke="rgba(34,197,94,0.5)" stroke-width="3"/>
+          <line x1="0" y1="196" x2="300" y2="196" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
+          <line x1="100" y1="0" x2="100" y2="200" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+          <line x1="200" y1="0" x2="200" y2="200" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+          <line x1="0" y1="100" x2="300" y2="100" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+        </svg>
+        <div class="pending-dot goal-dot-marker" id="goal-dot" style="display:none"></div>
+      </div>
+      <button class="skip-btn" onclick="commit(null)">Hopp over målplassering →</button>
+      <button class="back-btn" onclick="goBack(2)">← Tilbake til utfall</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- CONFIRM FLASH -->
+<div class="confirm-flash" id="confirm-flash">
+  <div class="confirm-badge">
+    <div class="confirm-icon" id="confirm-icon">⚽</div>
+    <div class="confirm-text" id="confirm-text">Mål registrert!</div>
+    <div class="confirm-sub" id="confirm-sub">Bjarg – 34:12</div>
+  </div>
+</div>
+
+<script>
+  // ── State ──
+  let activeSide = 'home';
+  let courtPos = null;
+  let outcome = null;
+  let stats = { home: { shots:17, tech:4, utv:1, reg:32 }, away: { shots:14, tech:3, utv:2, reg:29 } };
+  let history = [];
+  let flashTimer = null;
+
+  const teamNames = { home: 'Bjarg', away: 'Oppsal' };
+  const outcomeLabels = { goal: 'Mål', save: 'Redning', miss: 'Bom' };
+  const outcomeIcons  = { goal: '⚽', save: '🧤', miss: '💨' };
+  const outcomeText   = { goal: 'MÅL – marker i målet', save: 'REDNING – marker i målet' };
+  const outcomeHints  = { goal: 'Trykk der ballen gikk inn', save: 'Trykk der keeper tok ballen' };
+  const outcomeStepIcons = { goal: '⚽', save: '🧤' };
+
+  // ── Modal open / close ──
+  function openModal(side) {
+    activeSide = side;
+    courtPos = null;
+    outcome = null;
+    resetToStep1();
+    document.getElementById('modal-title').textContent = teamNames[side] + ' – Skudd';
+    document.getElementById('modal-title').className = 'modal-title ' + side;
+    document.getElementById('pending-dot').className = 'pending-dot ' + side;
+    document.getElementById('pending-dot').style.display = 'none';
+    document.getElementById('pos-dot').className = 'outcome-pos-dot ' + side;
+    document.getElementById('modal').classList.add('visible');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('visible');
+  }
+
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById('modal')) closeModal();
+  }
+
+  // ── Steps ──
+  function resetToStep1() {
+    document.getElementById('step-court').style.display = '';
+    document.getElementById('step-outcome').style.display = 'none';
+    document.getElementById('step-goal').style.display = 'none';
+    setStepIndicator(1);
+    document.getElementById('modal-step-label').textContent = 'Steg 1 – Posisjon';
+  }
+
+  function setStepIndicator(step) {
+    const show3 = outcome === 'goal' || outcome === 'save';
+    ['dot-1','dot-2','dot-3'].forEach((id, i) => {
+      const d = document.getElementById(id);
+      d.className = 'step-dot' + (activeSide === 'away' ? ' away' : '');
+      if (i + 1 < step) d.classList.add('done');
+      else if (i + 1 === step) d.classList.add('active');
+    });
+    document.getElementById('step-line-2').style.opacity = show3 ? '1' : '0.15';
+    document.getElementById('dot-3').style.opacity = show3 ? '1' : '0.2';
+  }
+
+  function goToStep2() {
+    document.getElementById('step-court').style.display = 'none';
+    document.getElementById('step-outcome').style.display = '';
+    document.getElementById('step-goal').style.display = 'none';
+    setStepIndicator(2);
+    const posLabel = courtPos.x < 0.33 ? 'Venstre fløy' : courtPos.x > 0.66 ? 'Høyre fløy' : 'Midten';
+    const depthLabel = courtPos.y < 0.35 ? ' (6m-sone)' : courtPos.y < 0.65 ? ' (9m)' : ' (bakrom)';
+    document.getElementById('pos-text').textContent = posLabel + depthLabel;
+    document.getElementById('modal-step-label').textContent = 'Steg 2 – Utfall';
+  }
+
+  function goToStep3() {
+    const stepGoal = document.getElementById('step-goal');
+    stepGoal.style.display = '';
+    stepGoal.dataset.outcome = outcome;
+    document.getElementById('step-court').style.display = 'none';
+    document.getElementById('step-outcome').style.display = 'none';
+    document.getElementById('goal-dot').style.display = 'none';
+    setStepIndicator(3);
+    document.getElementById('goal-step-icon').textContent = outcomeStepIcons[outcome];
+    document.getElementById('goal-step-text').textContent = outcomeText[outcome];
+    document.getElementById('goal-hint').textContent = outcomeHints[outcome];
+    document.getElementById('modal-step-label').textContent = 'Steg 3 av 3 – Plassering i mål';
+  }
+
+  function goBack(toStep) {
+    if (toStep === 1) resetToStep1();
+    else if (toStep === 2) goToStep2();
+  }
+
+  // ── Picking ──
+  function pickCourtPos(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    courtPos = {
+      x: (e.clientX - rect.left) / rect.width,
+      y: (e.clientY - rect.top) / rect.height,
+    };
+    const dot = document.getElementById('pending-dot');
+    dot.style.left = (courtPos.x * 100) + '%';
+    dot.style.top  = (courtPos.y * 100) + '%';
+    dot.style.display = 'block';
+    dot.style.transform = 'translate(-50%,-50%) scale(1.4)';
+    setTimeout(() => { dot.style.transform = 'translate(-50%,-50%) scale(1)'; }, 150);
+    setTimeout(goToStep2, 350);
+  }
+
+  function pickOutcome(o) {
+    outcome = o;
+    if (o === 'goal' || o === 'save') {
+      goToStep3();
+    } else {
+      commit(null);
+    }
+  }
+
+  function pickGoalPos(e) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    const dot = document.getElementById('goal-dot');
+    dot.style.left = (x * 100) + '%';
+    dot.style.top  = (y * 100) + '%';
+    dot.style.display = 'block';
+    dot.style.transform = 'translate(-50%,-50%) scale(1.4)';
+    setTimeout(() => { dot.style.transform = 'translate(-50%,-50%) scale(1)'; }, 150);
+    setTimeout(() => commit({ x, y }), 350);
+  }
+
+  function commit(goalPos) {
+    closeModal();
+    stats[activeSide].shots++;
+    stats[activeSide].reg++;
+    if (outcome === 'goal') {
+      const el = document.getElementById(activeSide + '-score');
+      el.textContent = parseInt(el.textContent) + 1;
+    }
+    history.push({ side: activeSide, outcome, courtPos, goalPos });
+    renderStats();
+    document.getElementById('last-event').textContent = teamNames[activeSide] + ' – ' + outcomeLabels[outcome];
+    showFlash(outcomeIcons[outcome], outcomeLabels[outcome] + ' registrert!', teamNames[activeSide] + ' – 34:12');
+  }
+
+  function renderStats() {
+    ['home','away'].forEach(s => {
+      document.getElementById(s + '-shots').textContent = stats[s].shots;
+      document.getElementById(s + '-reg').textContent   = stats[s].reg + ' reg.';
+    });
+  }
+
+  function quickStat(side, label) {
+    stats[side].reg++;
+    renderStats();
+    document.getElementById('last-event').textContent = teamNames[side] + ' – ' + label;
+    showFlash('📋', label + ' registrert!', teamNames[side] + ' – 34:12');
+  }
+
+  function undo() {
+    if (!history.length) return;
+    const last = history.pop();
+    stats[last.side].shots = Math.max(0, stats[last.side].shots - 1);
+    stats[last.side].reg   = Math.max(0, stats[last.side].reg - 1);
+    if (last.outcome === 'goal') {
+      const el = document.getElementById(last.side + '-score');
+      el.textContent = Math.max(0, parseInt(el.textContent) - 1);
+    }
+    renderStats();
+    document.getElementById('last-event').textContent = history.length ? '(angret)' : '–';
+    showFlash('↩', 'Angret siste', '');
+  }
+
+  function showFlash(icon, text, sub) {
+    const el = document.getElementById('confirm-flash');
+    document.getElementById('confirm-icon').textContent = icon;
+    document.getElementById('confirm-text').textContent = text;
+    document.getElementById('confirm-sub').textContent  = sub;
+    el.classList.add('visible');
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => el.classList.remove('visible'), 1100);
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
+</body>
+</html>

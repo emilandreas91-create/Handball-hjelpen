@@ -5,12 +5,17 @@ import {
     AlertTriangle,
     ArrowLeft,
     ArrowRight,
+    CalendarPlus,
+    CheckCircle2,
+    ChevronRight,
     ClipboardList,
+    ClipboardPaste,
     Minus,
     Shield,
     Target,
     TrendingDown,
     TrendingUp,
+    X,
 } from 'lucide-react';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -32,7 +37,6 @@ import { parseScheduleText } from '../lib/icalParser';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../components/features/useAuth';
-import { X, CalendarPlus, CheckCircle2, ClipboardPaste, ChevronRight } from 'lucide-react';
 
 
 type ViewMode = 'general' | 'goalkeeper';
@@ -538,15 +542,9 @@ export function TeamDetails() {
                         </Link>
 
                         <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">
-                                Lagdetaljer
-                            </p>
-                            <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
+                            <h1 className="text-4xl font-black tracking-tight text-white md:text-5xl">
                                 {team.name}
                             </h1>
-                            <p className="mt-4 max-w-2xl text-base leading-8 text-gray-300">
-                                Her får du en samlet oversikt over siste kamp, enkel trendvisning og historikk for laget.
-                            </p>
                         </div>
                     </div>
 
@@ -690,9 +688,6 @@ export function TeamDetails() {
                                             <h2 className="text-2xl font-bold text-white">
                                                 Uttellingsprosent, siste fem kamper
                                             </h2>
-                                            <p className="mt-1 text-sm text-gray-400">
-                                                En enkel trendvisning som gjør det lettere å fange utvikling raskt.
-                                            </p>
                                         </div>
                                     </div>
 
@@ -740,9 +735,6 @@ export function TeamDetails() {
                         <Shield className="text-blue-400" size={22} />
                         <div>
                             <h2 className="text-2xl font-bold text-white">Målvaktsanalyse</h2>
-                            <p className="mt-1 text-sm text-gray-400">
-                                Sesongbildet viser redningsprosent per sone når det finnes registrerte skudddata.
-                            </p>
                         </div>
                     </div>
 
@@ -817,9 +809,6 @@ export function TeamDetails() {
                     <ClipboardList className="text-primary" size={20} />
                     <div>
                         <h2 className="text-2xl font-bold text-white">Tidligere kamper</h2>
-                        <p className="mt-1 text-sm text-gray-400">
-                            Alle lagrede kamper for {team.name} vises her.
-                        </p>
                     </div>
                 </div>
 

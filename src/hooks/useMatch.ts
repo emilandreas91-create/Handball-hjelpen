@@ -81,6 +81,8 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [matchTime, setMatchTime] = useState(0);
     const [isRunning, setIsRunning] = useState(false);
     const [period, setPeriod] = useState(1);
+    const matchTimeRef = useRef(0);
+    const periodRef = useRef(1);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const remoteSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRemoteSyncAtRef = useRef(0);
@@ -97,20 +99,30 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
     const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
     const [hasResolvedRemoteDraft, setHasResolvedRemoteDraft] = useState(false);
 
+    useEffect(() => {
+        matchTimeRef.current = matchTime;
+    }, [matchTime]);
+
+    useEffect(() => {
+        periodRef.current = period;
+    }, [period]);
+
     const appendHistory = (
         side: TeamSide,
         type: StatType | string,
         data?: Record<string, number | string | boolean | null | undefined>,
     ) => {
         const normalizedData = normalizeMatchEventData(data);
+        const currentMatchTime = matchTimeRef.current;
+        const currentPeriod = periodRef.current;
 
         setHistory((prev) => [
             ...prev,
             {
                 side,
                 type,
-                period,
-                matchTime,
+                period: currentPeriod,
+                matchTime: currentMatchTime,
                 createdAt: new Date().toISOString(),
                 data: normalizedData,
             },

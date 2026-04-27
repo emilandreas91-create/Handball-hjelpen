@@ -2,14 +2,19 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// Your web app's Firebase configuration
+const required = (key: string): string => {
+    const value = import.meta.env[key];
+    if (!value) throw new Error(`Manglende miljøvariabel: ${key}`);
+    return value as string;
+};
+
 const firebaseConfig = {
-    apiKey: "AIzaSyC_09gTMNbLSwfAjWrqW3A5ehoqSXGklmE",
-    authDomain: "handball-stats-ab84e.firebaseapp.com",
-    projectId: "handball-stats-ab84e",
-    storageBucket: "handball-stats-ab84e.firebasestorage.app",
-    messagingSenderId: "948752971118",
-    appId: "1:948752971118:web:4de735ba51f39d73097d7f"
+    apiKey: required('VITE_FIREBASE_API_KEY'),
+    authDomain: required('VITE_FIREBASE_AUTH_DOMAIN'),
+    projectId: required('VITE_FIREBASE_PROJECT_ID'),
+    storageBucket: required('VITE_FIREBASE_STORAGE_BUCKET'),
+    messagingSenderId: required('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+    appId: required('VITE_FIREBASE_APP_ID'),
 };
 
 // Initialize Firebase

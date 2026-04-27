@@ -114,14 +114,9 @@ export function Teams() {
             <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
                 <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-3xl">
-                        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">Lag</p>
-                        <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
-                            Hold kampene ryddig organisert per lag.
+                        <h1 className="text-4xl font-black tracking-tight text-white md:text-5xl">
+                            Lag
                         </h1>
-                        <p className="mt-4 text-base leading-8 text-gray-300">
-                            Laglisten gir deg en fast struktur for kampdataene dine. Opprett lag én gang, og bruk dem
-                            videre når du starter nye kamper eller vil sammenligne tidligere prestasjoner.
-                        </p>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -147,10 +142,6 @@ export function Teams() {
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-2xl">
                         <h2 className="text-2xl font-bold text-white">Legg til nytt lag</h2>
-                        <p className="mt-2 text-sm leading-6 text-gray-400">
-                            Bruk tydelige navn som årgang, nivå eller gruppe, slik at kampene blir enkle å finne
-                            tilbake til senere.
-                        </p>
                     </div>
                     <form onSubmit={handleSubmit} className="grid w-full max-w-2xl gap-3">
                         <input

@@ -59,10 +59,6 @@ function ActionCard({
                     highlight ? 'bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.18),transparent_42%)]' : 'bg-[radial-gradient(circle_at_top_right,rgba(96,165,250,0.10),transparent_40%)]',
                 )}
             />
-            <div
-                aria-hidden="true"
-                className="absolute inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
-            />
 
             <div className="relative flex h-full flex-col">
                 <div className="flex items-start justify-between gap-4">
@@ -102,6 +98,7 @@ function ActionCard({
         </Link>
     );
 }
+
 
 interface ActivityCardProps {
     title: string;
@@ -261,12 +258,13 @@ export function Start() {
 
     const latestTactic = tactics[0] ?? null;
     const recentTeamFromMatch = [recentMatchDefaults?.homeTeamId, recentMatchDefaults?.awayTeamId]
-        .find((teamName) => typeof teamName === 'string' && teams.some((team) => team.name === teamName)) ?? null;
-    const recentTeamName = recentTeamFromMatch || latestTactic?.teamName || teams[0]?.name || null;
+        .map((teamId) => typeof teamId === 'string' ? teams.find((team) => team.id === teamId) : undefined)
+        .find((team) => team !== undefined) ?? null;
+    const recentTeamName = recentTeamFromMatch?.name || latestTactic?.teamName || teams[0]?.name || null;
     const recentTeamDetail = recentTeamFromMatch
         ? recentMatchDefaultsSource === 'cloud'
             ? 'Sist valgt i kampoppsettet og bekreftet i sky.'
-            : 'Sist valgt i kampoppsettet pÃ¥ denne enheten.'
+            : 'Sist valgt i kampoppsettet på denne enheten.'
         : latestTactic?.teamName
             ? `Fra taktikken "${latestTactic.name}".`
             : teams.length > 0
@@ -284,31 +282,10 @@ export function Start() {
             >
                 <div
                     aria-hidden="true"
-                    className="start-ambient-drift absolute -right-16 top-0 h-44 w-44 rounded-full bg-cyan-300/10 blur-3xl"
-                />
-                <div
-                    aria-hidden="true"
-                    className="absolute bottom-[-5rem] left-[-4rem] h-36 w-36 rounded-full bg-sky-400/8 blur-3xl"
-                />
-                <div
-                    aria-hidden="true"
-                    className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/30 to-transparent"
-                />
-                <div
-                    aria-hidden="true"
-                    className="absolute right-4 top-4 hidden h-[calc(100%-2rem)] w-[34%] rounded-[2rem] border border-white/[0.06] bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.10),transparent_64%)] lg:block"
-                />
-                <div
-                    aria-hidden="true"
-                    className="absolute right-[8%] top-[18%] hidden h-32 w-32 rounded-full border border-white/10 lg:block"
-                />
-                <div
-                    aria-hidden="true"
-                    className="absolute right-[8%] top-1/2 hidden h-px w-[34%] -translate-y-1/2 bg-gradient-to-r from-white/5 via-white/10 to-transparent lg:block"
+                    className="absolute -right-16 top-0 h-44 w-44 rounded-full bg-cyan-300/10 blur-3xl"
                 />
                 <div className="relative max-w-2xl">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-cyan-200/75">Forside</p>
-                    <h1 className="mt-4 text-4xl font-black tracking-[-0.05em] text-slate-50 md:text-5xl">
+                    <h1 className="text-4xl font-black tracking-[-0.05em] text-slate-50 md:text-5xl">
                         Handball-hjelpen
                     </h1>
                     <p className="mt-4 max-w-xl text-base font-medium leading-7 text-slate-300">
@@ -363,22 +340,10 @@ export function Start() {
                     <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-cyan-100">
                         <History size={18} />
                     </div>
-                    <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Rask oversikt</p>
-                        <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-50">Siste aktivitet</h2>
-                    </div>
+                    <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-50">Siste aktivitet</h2>
                 </div>
 
-                <div className="mt-5 grid gap-3 md:grid-cols-3">
-                    <ActivityCard
-                        title="Siste kamp"
-                        primary={hasLiveDraft ? 'Siste kamp kan fortsette' : 'Ingen kamp ennå'}
-                        secondary={hasLiveDraft
-                            ? `${periodLabel} • ${formatTime(matchTime)} • ${homeState.score}-${awayState.score}${formattedDraftTime ? ` • lagret ${formattedDraftTime}` : ''}`
-                            : 'Start ny kamp når du er klar.'}
-                        actionLabel="Fortsett kamp"
-                        actionTo="/stats"
-                    />
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
                     <ActivityCard
                         title="Sist brukte lag"
                         primary={teamsLoading ? 'Henter lag' : recentTeamName || 'Ingen lag ennå'}
@@ -400,7 +365,7 @@ export function Start() {
                 </div>
             </section>
 
-            {(!isOnline || hasLiveDraft || teams.length > 0 || draftRecovered) ? (
+            {(!isOnline || hasLiveDraft || draftRecovered) ? (
                 <section className="home-fade-up-delay-3 flex flex-wrap gap-2.5">
                     {hasLiveDraft || draftRecovered ? (
                         <StatusPill
@@ -420,12 +385,6 @@ export function Start() {
                             tone="warning"
                         />
                     ) : null}
-
-                    <StatusPill
-                        icon={Users}
-                        label="Lag"
-                        detail={teamsLoading ? 'Henter lag...' : `${teams.length} registrert`}
-                    />
                 </section>
             ) : null}
         </div>

@@ -14,7 +14,7 @@ import { type Team, useTeams } from '../hooks/useTeams';
 import { db } from '../lib/firebase';
 import { getTeamLookupNames, normalizeTeamNameKey } from '../lib/matchData';
 import { type CloudSyncState, prepareFirestorePayload, readScopedLocalStorage, removeScopedLocalStorage, writeScopedLocalStorage } from '../lib/persistence';
-import { DEFAULT_FRAME_DURATION_MS, MAX_TACTIC_PLAYERS, MIN_TACTIC_PLAYERS, cloneFrame, createEmptyTacticDraft, createPlayerToken, duplicateTokensAcrossFrames, getPlayerTokens, normalizeStoredTacticDocument, removeTokenAcrossFrames, type NormalizedTacticDocument, type TacticDraft, type TacticFrame } from '../lib/tacticsData';
+import { DEFAULT_FRAME_DURATION_MS, MAX_TACTIC_PLAYERS, MIN_TACTIC_PLAYERS, cloneFrame, createEmptyTacticDraft, createPlayerToken, duplicateTokensAcrossFrames, getPlayerTokens, normalizeStoredTacticDocument, removeTokenAcrossFrames, type NormalizedTacticDocument, type TacticDraft, type TacticFrame, type TacticPath } from '../lib/tacticsData';
 
 const TACTICS_DRAFT_KEY = 'handball-help-tactics-draft:v1';
 const TACTICS_DRAFT_REMOTE_DOC = 'tacticsDraft';
@@ -138,50 +138,30 @@ export function Tactics() {
     const localStatusText = formattedLocalTime
         ? `Sist lagret lokalt ${formattedLocalTime}.`
         : 'Kladden oppdateres automatisk mens du jobber.';
-    const legacyRemoteStatusTitle = !isOnline
-        ? 'Offline'
-        : isSaving
-            ? 'Lagrer nå'
-            : draft.id
-                ? hasDraftChanges
-                    ? 'Nye endringer ikke lagret'
-                    : formattedRemoteTime
-                        ? `Sist lagret ${formattedRemoteTime}`
-                        : 'Lagret'
-                : 'Ikke lagret enda';
-    const legacyRemoteStatusText = !isOnline
-        ? 'Du kan fortsette å tegne. Lagre til biblioteket når nettet er tilbake.'
-        : draft.id
-            ? hasDraftChanges
-                ? 'Trykk Lagre for å oppdatere den lagrede taktikken.'
-                : 'Taktikken ligger klar i biblioteket.'
-            : 'Denne taktikken finnes foreløpig bare som lokal kladd.';
-    void legacyRemoteStatusTitle;
-    void legacyRemoteStatusText;
     const remoteStatusTitle = !lastLocalSavedAt
         ? 'Ikke lagret'
         : !currentUser || !isOnline
             ? 'Bare lokalt'
             : draftCloudSyncState === 'error'
-                ? 'Kun lokalt akkurat nÃ¥'
+                ? 'Kun lokalt akkurat nå'
                 : draftCloudSyncState === 'saving'
-                    ? 'Lagrer nÃ¥'
+                    ? 'Lagrer nå'
                     : formattedRemoteTime
                         ? `Bekreftet i sky ${formattedRemoteTime}`
                         : 'Bare lokalt';
     const remoteStatusText = !lastLocalSavedAt
-        ? 'Kladden opprettes automatisk nÃ¥r du begynner Ã¥ jobbe.'
+        ? 'Kladden opprettes automatisk når du begynner å jobbe.'
         : !currentUser
-            ? 'Logg inn for Ã¥ synke kladden mellom enheter.'
+            ? 'Logg inn for å synke kladden mellom enheter.'
             : !isOnline
-                ? 'Kladden finnes lokalt og sendes til skyen nÃ¥r nettet er tilbake.'
+                ? 'Kladden finnes lokalt og sendes til skyen når nettet er tilbake.'
                 : draftCloudSyncState === 'error'
                     ? 'Forrige sky-synk feilet. Du kan fortsette, og den lokale kladden er beholdt.'
                     : draftCloudSyncState === 'saving'
-                        ? 'Vi venter pÃ¥ backend-bekreftelse fÃ¸r kladden markeres som lagret i sky.'
+                        ? 'Vi venter på backend-bekreftelse før kladden markeres som lagret i sky.'
                         : formattedRemoteTime
-                            ? 'Denne kladden er bekreftet lagret for denne brukeren og kan hentes tilbake pÃ¥ andre enheter.'
-                            : 'Denne taktikken finnes forelÃ¸pig bare som lokal kladd.';
+                            ? 'Denne kladden er bekreftet lagret for denne brukeren og kan hentes tilbake på andre enheter.'
+                            : 'Denne taktikken finnes foreløpig bare som lokal kladd.';
     const saveButtonLabel = isSaving
         ? 'Lagrer...'
         : !isOnline
@@ -461,6 +441,46 @@ export function Tactics() {
         setPendingPathStart(null);
     };
 
+    const handleTokenMove = (tokenId: string, x: number, y: number) => {
+        setInfo(null);
+        setDraft((current) => ({
+            ...current,
+            frames: current.frames.map((frame, index) => {
+                if (index !== frameIndex) return frame;
+
+                const updatedTokens = frame.tokens.map((token) =>
+                    token.id === tokenId ? { ...token, x, y } : token,
+                );
+
+                if (frameIndex === 0) {
+                    return { ...frame, tokens: updatedTokens };
+                }
+
+                const prevFrame = current.frames[frameIndex - 1];
+                const prevToken = prevFrame?.tokens.find((t) => t.id === tokenId);
+                if (!prevToken) {
+                    return { ...frame, tokens: updatedTokens };
+                }
+
+                const autoPathId = `auto_${tokenId}`;
+                const autoPath: TacticPath = {
+                    id: autoPathId,
+                    type: 'move',
+                    fromX: prevToken.x,
+                    fromY: prevToken.y,
+                    toX: x,
+                    toY: y,
+                };
+
+                const updatedPaths = frame.paths.some((p) => p.id === autoPathId)
+                    ? frame.paths.map((p) => p.id === autoPathId ? autoPath : p)
+                    : [...frame.paths, autoPath];
+
+                return { ...frame, tokens: updatedTokens, paths: updatedPaths };
+            }),
+        }));
+    };
+
     const handleSave = async () => {
         const trimmedName = draft.name.trim();
         if (!trimmedName) return void setInfo(null, 'Gi taktikken et navn før du lagrer.');
@@ -504,9 +524,7 @@ export function Tactics() {
             <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
                     <div className="max-w-3xl">
-                        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary/80">Taktikk</p>
-                        <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">Bygg stegvis håndballtaktikk.</h1>
-                        <p className="mt-4 text-base leading-8 text-gray-300">Velg lag, dra spillere og ball på plass, tegn enkle piler og spill alt av i en ren presentasjonsvisning.</p>
+                        <h1 className="text-4xl font-black tracking-tight text-white md:text-5xl">Taktikk</h1>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-3xl border border-white/10 bg-black/20 p-5"><p className="text-sm text-gray-400">Lagrede taktikker</p><p className="mt-2 text-3xl font-black text-white">{tactics.length}</p></div>
@@ -556,7 +574,7 @@ export function Tactics() {
                                 <button type="button" onClick={handleSave} disabled={!isOnline || isSaving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-bold text-black transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"><Save size={16} />{saveButtonLabel}</button>
                             </div>
                             {!selectedTeam && draft.teamName ? <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">Taktikken peker mot laget "{draft.teamName}", men laget finnes ikke lenger. Velg et aktivt lag før du lagrer.</div> : null}
-                            <TacticBoard courtType={draft.courtType} tokens={currentFrame?.tokens ?? []} paths={currentFrame?.paths ?? []} activeTool={activeTool} pendingPathStart={pendingPathStart} onBoardPoint={handleBoardPoint} onTokenMove={(tokenId, x, y) => { setInfo(null); updateCurrentFrame((frame) => ({ ...frame, tokens: frame.tokens.map((token) => token.id === tokenId ? { ...token, x, y } : token) })); }} interactive helperText={activeTool === 'token' ? 'Dra spillere og ball dit du vil ha dem i dette steget.' : pendingPathStart ? 'Trykk et nytt punkt for å fullføre pilen.' : 'Trykk startpunkt og deretter sluttpunkt for å tegne pilen.'} />
+                            <TacticBoard courtType={draft.courtType} tokens={currentFrame?.tokens ?? []} paths={currentFrame?.paths ?? []} activeTool={activeTool} pendingPathStart={pendingPathStart} onBoardPoint={handleBoardPoint} onTokenMove={handleTokenMove} interactive helperText={activeTool === 'token' ? 'Dra spillere og ball dit du vil ha dem i dette steget.' : pendingPathStart ? 'Trykk et nytt punkt for å fullføre pilen.' : 'Trykk startpunkt og deretter sluttpunkt for å tegne pilen.'} />
                             <div className="grid gap-3 lg:grid-cols-[auto_auto_1fr_auto_auto]">
                                 <div className="flex rounded-2xl border border-white/10 bg-white/5 p-1">{([['token', 'Flytt'], ['move', 'Bevegelse'], ['pass', 'Pass']] as Array<[TacticBoardTool, string]>).map(([tool, label]) => <button key={tool} type="button" onClick={() => setActiveTool(tool)} className={`rounded-xl px-4 py-3 text-sm font-bold transition ${activeTool === tool ? 'bg-primary text-black' : 'text-white hover:bg-white/10'}`}>{label}</button>)}</div>
                                 <div className="flex gap-2"><button type="button" onClick={() => { if (currentPlayers.length >= MAX_TACTIC_PLAYERS) return void setInfo(null, `Du kan ha maks ${MAX_TACTIC_PLAYERS} spillere i v1.`); setDraft((current) => ({ ...current, frames: duplicateTokensAcrossFrames(current.frames, createPlayerToken(currentPlayers.length + 1, draft.courtType)) })); setInfo(null); }} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"><Plus size={16} />Spiller</button><button type="button" onClick={() => { if (currentPlayers.length <= MIN_TACTIC_PLAYERS) return void setInfo(null, 'Det må være minst én spiller igjen på tavla.'); const lastPlayer = [...currentPlayers].sort((left, right) => Number(right.label) - Number(left.label))[0]; if (!lastPlayer) return; setDraft((current) => ({ ...current, frames: removeTokenAcrossFrames(current.frames, lastPlayer.id) })); setInfo(null); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">Fjern</button></div>
@@ -575,7 +593,7 @@ export function Tactics() {
 
                 <aside className="space-y-6">
                     <section className="rounded-[2rem] border border-white/10 bg-black/20 p-5 shadow-xl sm:p-6">
-                        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Lagrede taktikker</h2><p className="mt-1 text-sm text-gray-400">Åpne en tavle igjen eller start presentasjon direkte.</p></div><span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm font-bold text-white">{tactics.length}</span></div>
+                        <div className="flex items-center justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Lagrede taktikker</h2></div><span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm font-bold text-white">{tactics.length}</span></div>
                         {tactics.length === 0 ? <EmptyState icon={FolderOpen} title="Ingen taktikker lagret ennå" description="Når du lagrer første tavle, dukker den opp her med rask tilgang til redigering og presentasjon." className="mt-5 border-white/10 bg-white/5 p-6" /> : <div className="mt-5 space-y-3">{tactics.map((tactic) => <article key={tactic.id} className={`rounded-3xl border p-4 transition ${draft.id === tactic.id ? 'border-primary/30 bg-primary/10' : 'border-white/10 bg-white/5'}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-base font-bold text-white">{tactic.name}</h3><p className="mt-1 text-sm text-gray-400">{tactic.teamName || 'Uten lag'} • {tactic.courtType === 'full' ? 'Hel bane' : 'Halv bane'}</p><p className="mt-1 text-xs text-white/50">{tactic.frames.length} steg • Oppdatert {tactic.updatedAtLabel}</p></div><button type="button" onClick={() => setPendingDeleteId(tactic.id)} className="rounded-xl border border-white/10 bg-black/20 p-2 text-white/60 transition hover:bg-red-500/10 hover:text-red-200" aria-label={`Slett ${tactic.name}`}><Trash2 size={16} /></button></div><div className="mt-4 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => requestSwitchAction({ type: 'open', tactic })} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">Åpne tavle</button><button type="button" onClick={() => navigate(`/tactics/${tactic.id}/present`)} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white"><Play size={16} />Presenter</button></div></article>)}</div>}
                     </section>
                     <section className="rounded-[2rem] border border-white/10 bg-black/20 p-5 shadow-xl sm:p-6"><h2 className="text-xl font-bold text-white">Enkel arbeidsflyt</h2><div className="mt-4 space-y-3 text-sm leading-6 text-gray-300"><p>1. Velg lag, navn og bane.</p><p>2. Dra spillerne på plass i første steg.</p><p>3. Bytt til bevegelse eller pass og tegn piler.</p><p>4. Dupliser steget og flytt spillerne videre for neste frame.</p><p>5. Lagre og åpne presentasjon når laget skal se løsningen.</p></div></section>
