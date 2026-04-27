@@ -142,9 +142,27 @@ Central file for all match-related types and pure functions. Key types:
 
 ### Stats.tsx
 
-The largest and most complex file. It handles: match setup UI (team names, custom buttons), live stat registration, cloud sync status display, and saving finished matches to Firestore. The todo tracks splitting this into smaller pieces.
+Handles match setup UI (team names, custom buttons), live stat registration, cloud sync status display, and saving finished matches to Firestore. Delegates all localStorage/Firestore sync for UI draft and defaults to `hooks/useStatsSync.ts`.
 
-*Note: A redesign and refactoring is currently planned for this component. See `public/mockup-stats.html` for the new proposed 3-step shot registration flow and updated visualization UI.*
+Two phases controlled by `isLivePhase` (= `isMatchStarted || hasLiveMatchContent`):
+- **Setup phase** – team selection, match name, start button
+- **Live phase** – scoreboard, stat buttons, shot modal, save/undo/reset controls
+
+### useStatsSync (`hooks/useStatsSync.ts`)
+
+Handles the dual-sync pattern for Stats.tsx UI state and team defaults. Accepts the current UI values and two callbacks (`onUiDraftLoaded`, `onDefaultsLoaded`), and manages:
+- Hydration from localStorage on mount / user change
+- `onSnapshot` subscriptions to two Firestore docs (`liveStatsUiDraft`, `liveStatsDefaults`)
+- Debounced writes back to localStorage + Firestore when values change (700ms delay)
+- Cleanup (removes docs when state is empty)
+
+Uses the callback-ref pattern internally so snapshot effects only re-subscribe when `currentUser` changes, not on every render.
+
+Returns: `hasResolvedRemoteUiDraft`, `hasResolvedRemoteDefaults`, sync states and timestamps for both channels.
+
+### FeedbackBanner (`components/ui/FeedbackBanner.tsx`)
+
+Reusable inline feedback strip. Props: `type` (`'success' | 'error' | 'info' | 'warning'`) and `message`. Used in Stats.tsx for all transient user feedback.
 
 ### useTeamMatches
 

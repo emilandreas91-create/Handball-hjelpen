@@ -346,6 +346,7 @@ export function MatchProvider({ children }: { children: React.ReactNode }) {
                 remoteSyncTimeoutRef.current = null;
             }
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [awayState, currentUser, hasHydratedDraft, hasResolvedRemoteDraft, history, homeState, isRunning, matchTime, period]);
 
     const toggleTimer = () => setIsRunning((current) => !current);
