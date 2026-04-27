@@ -17,6 +17,30 @@ No test suite exists.
 
 React 18 + TypeScript + Vite + Tailwind CSS + Firebase (Auth + Firestore). Deployed to GitHub Pages at `/Handball-hjelpen/` – this is why the app uses `HashRouter` (not `BrowserRouter`).
 
+## Environment variables
+
+All Firebase config is injected via Vite env vars. Copy `.env.example` to `.env.local` and fill in values from the Firebase console:
+
+```
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+```
+
+For CI/CD (GitHub Actions), these are stored as repository secrets and injected at build time.
+
+## Deploy
+
+Push to `main` triggers the GitHub Actions workflow (`.github/workflows/deploy.yml`):
+1. `npm install` + `npm run build`
+2. Uploads `./dist` as a Pages artifact
+3. Deploys to GitHub Pages
+
+Only one deployment runs at a time (`concurrency: pages`). In-progress deployments are never cancelled.
+
 ## Architecture
 
 ### Provider tree
@@ -87,9 +111,40 @@ Central file for all match-related types and pure functions. Key types:
 - `buildCurrentDraft` snapshots current state for persistence
 - The cloud sync effect depends on all state values – changes to any piece of match state trigger a debounced Firestore write
 
+`useMatchContext()` exposes the following API:
+
+| Field / function | Type | Description |
+|---|---|---|
+| `matchTime` | `number` | Elapsed seconds |
+| `isRunning` | `boolean` | Whether the clock is ticking |
+| `period` | `number` | Current period (1-based) |
+| `periodLabel` | `string` | Human-readable period label |
+| `homeState` / `awayState` | `TeamState` | Score, stats, shot/goal/save locations |
+| `canUndo` | `boolean` | True if there is history to undo |
+| `draftRecovered` | `boolean` | True if a draft was recovered on load |
+| `draftRecoveredFrom` | `string \| null` | Source of recovered draft |
+| `lastDraftSavedAt` | `number \| null` | Timestamp of last local save |
+| `cloudSyncState` | `'idle' \| 'saving' \| 'saved' \| 'error'` | Current Firestore sync status |
+| `lastCloudSyncAt` | `number \| null` | Timestamp of last successful cloud sync |
+| `history` | `MatchEvent[]` | Full event log |
+| `toggleTimer()` | `() => void` | Start/stop the clock |
+| `resetTimer()` | `() => void` | Reset clock to 0 without clearing events |
+| `formatTime()` | `() => string` | Format current matchTime as MM:SS |
+| `nextPeriod()` | `() => void` | Advance to next period |
+| `updateStat()` | `(side, type, delta) => void` | Increment/decrement a stat counter |
+| `addGoalLocation()` | `(side, location) => void` | Record a goal position |
+| `addShotLocation()` | `(side, location) => void` | Record a shot position |
+| `addSave()` | `(side, location) => void` | Record a save position |
+| `addCombinedShot()` | `(side, shotLocation, outcome, ...) => void` | Record shot + outcome in one call |
+| `undoLastStat()` | `() => void` | Undo the most recent event |
+| `resetMatch()` | `() => void` | Full reset – clears all state and localStorage draft |
+| `loadMatch()` | `(data: MatchData) => void` | Load a saved match into live state |
+
 ### Stats.tsx
 
 The largest and most complex file. It handles: match setup UI (team names, custom buttons), live stat registration, cloud sync status display, and saving finished matches to Firestore. The todo tracks splitting this into smaller pieces.
+
+*Note: A redesign and refactoring is currently planned for this component. See `public/mockup-stats.html` for the new proposed 3-step shot registration flow and updated visualization UI.*
 
 ### useTeamMatches
 

@@ -17,11 +17,11 @@ import {
     Users,
     Wifi,
     WifiOff,
-    X
 } from 'lucide-react';
 import { StatButton } from '../components/features/StatButton';
 import { GoalVisualizer } from '../components/features/GoalVisualizer';
 import { CourtVisualizer } from '../components/features/CourtVisualizer';
+import { ShotRegistrationModal } from '../components/features/ShotRegistrationModal';
 import { useAuth } from '../components/features/useAuth';
 import { Dialog } from '../components/ui/Dialog';
 import { useMatchContext } from '../hooks/useMatch';
@@ -49,12 +49,6 @@ import {
 } from '../lib/matchData';
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error';
-type PendingShotState = {
-    x: number;
-    y: number;
-    side: TeamSide;
-    teamName: string;
-};
 
 interface FeedbackState {
     type: 'success' | 'error' | 'info' | 'warning';
@@ -102,8 +96,7 @@ export function Stats() {
     const [matchName, setMatchName] = useState('');
     const [isEditMode, setIsEditMode] = useState(false);
     const [customButtons, setCustomButtons] = useState<LiveStatsButtonDefinition[]>([]);
-    const [pendingShot, setPendingShot] = useState<PendingShotState | null>(null);
-    const [pendingGoalPlacement, setPendingGoalPlacement] = useState<{ x: number; y: number } | null>(null);
+    const [shotModalSide, setShotModalSide] = useState<TeamSide | null>(null);
     const [saveState, setSaveState] = useState<SaveState>('idle');
     const [feedback, setFeedback] = useState<FeedbackState | null>(null);
     const [lastHistorySaveAt, setLastHistorySaveAt] = useState<number | null>(null);
@@ -148,8 +141,7 @@ export function Stats() {
         setMatchName('');
         setIsEditMode(false);
         setCustomButtons([]);
-        setPendingShot(null);
-        setPendingGoalPlacement(null);
+        setShotModalSide(null);
         setSaveState('idle');
         setFeedback(null);
         setLastHistorySaveAt(null);
@@ -517,31 +509,11 @@ export function Stats() {
         };
     };
 
-    const cancelPendingShot = (message?: string) => {
-        setPendingShot(null);
-        setPendingGoalPlacement(null);
-
-        if (message) {
-            setFeedback({
-                type: 'info',
-                message,
-            });
-        }
-    };
-
     const handleSelectActiveSide = (nextSide: TeamSide) => {
-        if (pendingShot && pendingShot.side !== nextSide) {
-            cancelPendingShot('Skuddregistreringen ble lukket fordi du byttet aktivt lag.');
-        }
-
         setActiveSide(nextSide);
     };
 
     const handleTeamSelectionChange = (side: TeamSide, value: string) => {
-        if (pendingShot) {
-            cancelPendingShot('Skuddregistreringen ble lukket fordi lagvalget ble endret.');
-        }
-
         if (side === 'home') {
             setHomeTeamId(value);
             return;
@@ -550,20 +522,16 @@ export function Stats() {
         setAwayTeamId(value);
     };
 
-    const handleCombinedShot = (result: 'goal' | 'save' | 'miss') => {
-        if (!pendingShot || !pendingGoalPlacement) return;
-
-        addCombinedShot(
-            pendingShot.side,
-            pendingShot.x,
-            pendingShot.y,
-            pendingGoalPlacement.x,
-            pendingGoalPlacement.y,
-            result,
-        );
-
-        setPendingShot(null);
-        setPendingGoalPlacement(null);
+    const handleShotModalCommit = (
+        courtX: number,
+        courtY: number,
+        outcome: 'goal' | 'save' | 'miss',
+        goalX: number,
+        goalY: number,
+    ) => {
+        if (!shotModalSide) return;
+        addCombinedShot(shotModalSide, courtX, courtY, goalX, goalY, outcome);
+        setShotModalSide(null);
     };
 
     const addCustomButton = () => {
@@ -716,7 +684,7 @@ export function Stats() {
     );
     const hasAnyPersistedContent = hasLiveMatchContent || hasUiDraftContent || hasDefaultSelections;
     const isLivePhase = isMatchStarted || hasLiveMatchContent;
-    const canSaveMatch = Boolean(currentUser) && !sameTeamsSelected && !pendingShot && isOnline && saveState !== 'saving';
+    const canSaveMatch = Boolean(currentUser) && !sameTeamsSelected && isOnline && saveState !== 'saving';
     const hasHistorySave = lastHistorySaveAt !== null;
     const hasUnsavedChangesSinceHistorySave = Boolean(
         lastHistorySaveAt &&
@@ -838,14 +806,6 @@ export function Stats() {
             return;
         }
 
-        if (pendingShot) {
-            setFeedback({
-                type: 'warning',
-                message: 'Fullfør eller avbryt skuddregistreringen før du lagrer.'
-            });
-            return;
-        }
-
         if (!isOnline) {
             setFeedback({
                 type: 'warning',
@@ -911,8 +871,7 @@ export function Stats() {
         setIsMatchStarted(false);
         setShowSetupPanel(false);
         setMatchName('');
-        setPendingShot(null);
-        setPendingGoalPlacement(null);
+        setShotModalSide(null);
         setSaveState('idle');
         setLastHistorySaveAt(null);
         setSavedMatchName('');
@@ -1342,11 +1301,30 @@ export function Stats() {
             ) : null}
 
             <div className="grid grid-cols-2 gap-4 md:gap-6 lg:grid-cols-4">
+                <div className="col-span-2 mb-2 grid grid-cols-2 gap-3">
+                    <button
+                        type="button"
+                        onClick={() => setShotModalSide('home')}
+                        className="flex items-center justify-between rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/15 to-primary/5 px-4 py-4 text-sm font-black text-white transition active:scale-[0.97] hover:from-primary/25 hover:to-primary/10"
+                    >
+                        <span>🎯 Skudd</span>
+                        <span className="text-xl font-black text-primary">{homeState.score + homeState.shotLocations.length}</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setShotModalSide('away')}
+                        className="flex items-center justify-between rounded-2xl border border-secondary/30 bg-gradient-to-br from-secondary/15 to-secondary/5 px-4 py-4 text-sm font-black text-white transition active:scale-[0.97] hover:from-secondary/25 hover:to-secondary/10"
+                    >
+                        <span>🎯 Skudd</span>
+                        <span className="text-xl font-black text-secondary">{awayState.score + awayState.shotLocations.length}</span>
+                    </button>
+                </div>
+
                 <div className="col-span-2 mb-4 flex justify-center">
                     <div className="w-full">
                         <CourtVisualizer
                             locations={activeState.shotLocations}
-                            onAddLocation={(x, y) => setPendingShot({ x, y, side: activeSide, teamName: activeTeamName })}
+                            onAddLocation={() => {}}
                             teamName={activeTeamName}
                         />
                     </div>
@@ -1471,72 +1449,13 @@ export function Stats() {
                 </div>
             </div>
 
-            {pendingShot ? (
-                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-                    <div className="relative w-full rounded-t-3xl border border-white/10 bg-card p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="shot-dialog-title">
-                        <button
-                            type="button"
-                            onClick={() => cancelPendingShot()}
-                            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-gray-400 transition-colors hover:bg-white/20 hover:text-white"
-                            aria-label="Lukk skuddregistrering"
-                        >
-                            <X size={20} />
-                        </button>
-
-                        <h2 id="shot-dialog-title" className="mb-2 mt-4 text-center text-2xl font-bold">
-                            {!pendingGoalPlacement ? 'Hvor gikk skuddet?' : 'Hva ble resultatet?'}
-                        </h2>
-                        <p className="mb-6 text-center text-sm text-gray-400">
-                            {!pendingGoalPlacement
-                                ? 'Plasser skuddet i målet for å fullføre registreringen.'
-                                : `Registrering gjelder ${pendingShot.teamName}. Velg resultatet under.`}
-                        </p>
-
-                        {!pendingGoalPlacement ? (
-                            <div className="mb-4">
-                                <GoalVisualizer
-                                    saves={[]}
-                                    onAddSave={(x, y) => setPendingGoalPlacement({ x, y })}
-                                    teamName={pendingShot.teamName}
-                                    type="goal"
-                                    title="Plassering i mål"
-                                />
-                            </div>
-                        ) : (
-                            <div className="mt-4 flex flex-col gap-4">
-                                <button
-                                    type="button"
-                                    onClick={() => handleCombinedShot('goal')}
-                                    className="w-full rounded-xl bg-gradient-to-br from-green-500 to-green-700 py-4 text-xl font-bold shadow-lg transition-transform hover:scale-[1.02]"
-                                >
-                                    Mål
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleCombinedShot('save')}
-                                    className="w-full rounded-xl bg-gradient-to-br from-red-500 to-red-700 py-4 text-xl font-bold shadow-lg transition-transform hover:scale-[1.02]"
-                                >
-                                    Redning
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleCombinedShot('miss')}
-                                    className="w-full rounded-xl bg-gradient-to-br from-yellow-500 to-yellow-700 py-4 text-xl font-bold text-black shadow-lg transition-transform hover:scale-[1.02]"
-                                >
-                                    Skuddbom
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setPendingGoalPlacement(null)}
-                                    className="mt-2 w-full rounded-xl bg-white/5 py-3 text-sm font-semibold text-gray-400 transition-colors hover:bg-white/10 hover:text-white"
-                                >
-                                    Velg ny plassering i mål
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : null}
+            <ShotRegistrationModal
+                isOpen={shotModalSide !== null}
+                side={shotModalSide ?? 'home'}
+                teamName={shotModalSide === 'home' ? homeTeamId || 'Hjemme' : awayTeamId || 'Borte'}
+                onCommit={handleShotModalCommit}
+                onClose={() => setShotModalSide(null)}
+            />
 
             <Dialog
                 isOpen={isSaveSuccessDialogOpen}
