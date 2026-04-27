@@ -2,22 +2,25 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-const required = (key: string): string => {
-    const value = import.meta.env[key];
-    if (!value) throw new Error(`Manglende miljøvariabel: ${key}`);
-    return value as string;
-};
+const env = (key: string): string => (import.meta.env[key] as string) ?? '';
 
 const firebaseConfig = {
-    apiKey: required('VITE_FIREBASE_API_KEY'),
-    authDomain: required('VITE_FIREBASE_AUTH_DOMAIN'),
-    projectId: required('VITE_FIREBASE_PROJECT_ID'),
-    storageBucket: required('VITE_FIREBASE_STORAGE_BUCKET'),
-    messagingSenderId: required('VITE_FIREBASE_MESSAGING_SENDER_ID'),
-    appId: required('VITE_FIREBASE_APP_ID'),
+    apiKey: env('VITE_FIREBASE_API_KEY'),
+    authDomain: env('VITE_FIREBASE_AUTH_DOMAIN'),
+    projectId: env('VITE_FIREBASE_PROJECT_ID'),
+    storageBucket: env('VITE_FIREBASE_STORAGE_BUCKET'),
+    messagingSenderId: env('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+    appId: env('VITE_FIREBASE_APP_ID'),
 };
 
-// Initialize Firebase
+const missingVars = Object.entries(firebaseConfig)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+
+if (missingVars.length > 0) {
+    console.error('Manglende Firebase-konfig:', missingVars.join(', '));
+}
+
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
