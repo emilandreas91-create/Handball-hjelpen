@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signOut } from 'firebase/auth';
+import { User, onAuthStateChanged, signOut, getRedirectResult } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
 import { LoadingState } from '../ui/LoadingState';
 import { AuthContext } from './auth-context';
@@ -9,6 +9,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        getRedirectResult(auth).catch((err) => {
+            console.error('Google redirect-feil:', err);
+        });
+
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             setCurrentUser(user);
             setLoading(false);
