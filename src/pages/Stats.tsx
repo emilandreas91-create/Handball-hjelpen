@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { addDoc, collection, deleteDoc, doc, onSnapshot, setDoc, Timestamp } from 'firebase/firestore';
+import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { clsx } from 'clsx';
 import {
-    CheckCircle2,
     Edit2,
     Info,
     Loader2,
@@ -24,22 +23,18 @@ import { CourtVisualizer } from '../components/features/CourtVisualizer';
 import { ShotRegistrationModal } from '../components/features/ShotRegistrationModal';
 import { useAuth } from '../components/features/useAuth';
 import { Dialog } from '../components/ui/Dialog';
+import { FeedbackBanner } from '../components/ui/FeedbackBanner';
 import { useMatchContext } from '../hooks/useMatch';
+import { useStatsSync } from '../hooks/useStatsSync';
 import { useTeams } from '../hooks/useTeams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { db } from '../lib/firebase';
 import {
-    LIVE_STATS_DEFAULTS_KEY,
-    LIVE_STATS_DEFAULTS_REMOTE_DOC,
-    LIVE_STATS_UI_KEY,
-    LIVE_STATS_UI_REMOTE_DOC,
-    normalizeLiveStatsDefaults,
-    normalizeLiveStatsUiDraft,
     type LiveStatsButtonDefinition,
     type LiveStatsDefaults,
     type LiveStatsUiDraft,
 } from '../lib/liveStatsState';
-import { type CloudSyncState, prepareFirestorePayload, readScopedLocalStorage, removeScopedLocalStorage, writeScopedLocalStorage } from '../lib/persistence';
+import { prepareFirestorePayload } from '../lib/persistence';
 import {
     buildStoredMatchDocument,
     type CustomStatDefinition,
@@ -57,12 +52,6 @@ interface FeedbackState {
 
 export function Stats() {
     const navigate = useNavigate();
-    const uiDraftSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const defaultsSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const lastUiDraftSavedAtRef = useRef<number | null>(null);
-    const lastDefaultsSavedAtRef = useRef<number | null>(null);
-    const homeTeamIdRef = useRef('');
-    const awayTeamIdRef = useRef('');
     const {
         matchTime,
         isRunning,
@@ -100,7 +89,6 @@ export function Stats() {
     const [saveState, setSaveState] = useState<SaveState>('idle');
     const [feedback, setFeedback] = useState<FeedbackState | null>(null);
     const [lastHistorySaveAt, setLastHistorySaveAt] = useState<number | null>(null);
-    const [hasHydratedUiDraft, setHasHydratedUiDraft] = useState(false);
     const [isMatchStarted, setIsMatchStarted] = useState(false);
     const [showSetupPanel, setShowSetupPanel] = useState(false);
     const [editingButtonId, setEditingButtonId] = useState<string | null>(null);
@@ -109,32 +97,9 @@ export function Stats() {
     const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
     const [savedMatchName, setSavedMatchName] = useState('');
     const [isSaveSuccessDialogOpen, setIsSaveSuccessDialogOpen] = useState(false);
-    const [lastUiDraftSavedAt, setLastUiDraftSavedAt] = useState<number | null>(null);
-    const [lastDefaultsSavedAt, setLastDefaultsSavedAt] = useState<number | null>(null);
-    const [uiCloudSyncState, setUiCloudSyncState] = useState<CloudSyncState>('idle');
-    const [defaultsCloudSyncState, setDefaultsCloudSyncState] = useState<CloudSyncState>('idle');
-    const [lastUiCloudSyncAt, setLastUiCloudSyncAt] = useState<number | null>(null);
-    const [lastDefaultsCloudSyncAt, setLastDefaultsCloudSyncAt] = useState<number | null>(null);
-    const [hasResolvedRemoteUiDraft, setHasResolvedRemoteUiDraft] = useState(false);
-    const [hasResolvedRemoteDefaults, setHasResolvedRemoteDefaults] = useState(false);
 
-    const applyUiDraft = (draft: LiveStatsUiDraft) => {
-        setActiveSide(draft.activeSide === 'away' ? 'away' : 'home');
-        setHomeTeamId(typeof draft.homeTeamId === 'string' ? draft.homeTeamId : '');
-        setAwayTeamId(typeof draft.awayTeamId === 'string' ? draft.awayTeamId : '');
-        setMatchName(typeof draft.matchName === 'string' ? draft.matchName : '');
-        setIsMatchStarted(Boolean(draft.isMatchStarted));
-        setCustomButtons(Array.isArray(draft.customButtons) ? draft.customButtons : []);
-        setLastUiDraftSavedAt(typeof draft.updatedAt === 'number' ? draft.updatedAt : null);
-    };
-
-    const applyDefaults = (defaults: LiveStatsDefaults) => {
-        setHomeTeamId(typeof defaults.homeTeamId === 'string' ? defaults.homeTeamId : '');
-        setAwayTeamId(typeof defaults.awayTeamId === 'string' ? defaults.awayTeamId : '');
-        setLastDefaultsSavedAt(typeof defaults.updatedAt === 'number' ? defaults.updatedAt : null);
-    };
-
-    const resetUiDraftState = () => {
+    // Reset non-sync UI state when user changes
+    useEffect(() => {
         setActiveSide('home');
         setHomeTeamId('');
         setAwayTeamId('');
@@ -153,327 +118,45 @@ export function Stats() {
         setIsResetDialogOpen(false);
         setSavedMatchName('');
         setIsSaveSuccessDialogOpen(false);
-        setLastUiDraftSavedAt(null);
-        setLastDefaultsSavedAt(null);
-        setUiCloudSyncState('idle');
-        setDefaultsCloudSyncState('idle');
-        setLastUiCloudSyncAt(null);
-        setLastDefaultsCloudSyncAt(null);
-    };
-
-    useEffect(() => {
-        lastUiDraftSavedAtRef.current = lastUiDraftSavedAt;
-    }, [lastUiDraftSavedAt]);
-
-    useEffect(() => {
-        lastDefaultsSavedAtRef.current = lastDefaultsSavedAt;
-    }, [lastDefaultsSavedAt]);
-
-    useEffect(() => {
-        homeTeamIdRef.current = homeTeamId;
-        awayTeamIdRef.current = awayTeamId;
-    }, [awayTeamId, homeTeamId]);
-
-    useEffect(() => {
-        if (uiDraftSyncTimeoutRef.current) {
-            clearTimeout(uiDraftSyncTimeoutRef.current);
-            uiDraftSyncTimeoutRef.current = null;
-        }
-
-        if (defaultsSyncTimeoutRef.current) {
-            clearTimeout(defaultsSyncTimeoutRef.current);
-            defaultsSyncTimeoutRef.current = null;
-        }
-
-        setHasHydratedUiDraft(false);
-        resetUiDraftState();
-
-        if (typeof window === 'undefined') {
-            setHasHydratedUiDraft(true);
-            return;
-        }
-
-        try {
-            const parsedDraft = readScopedLocalStorage(
-                LIVE_STATS_UI_KEY,
-                currentUser?.uid,
-                normalizeLiveStatsUiDraft,
-            );
-            if (parsedDraft) {
-                applyUiDraft(parsedDraft);
-                return;
-            }
-
-            const parsedDefaults = readScopedLocalStorage(
-                LIVE_STATS_DEFAULTS_KEY,
-                currentUser?.uid,
-                normalizeLiveStatsDefaults,
-            );
-            if (parsedDefaults) {
-                applyDefaults(parsedDefaults);
-            }
-        } catch (draftError) {
-            console.error('Kunne ikke gjenopprette lokalt kampoppsett.', draftError);
-            removeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid);
-            removeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid);
-        } finally {
-            setHasHydratedUiDraft(true);
-        }
     }, [currentUser?.uid]);
 
-    useEffect(() => {
-        if (!currentUser) {
-            setHasResolvedRemoteUiDraft(true);
-            setUiCloudSyncState('idle');
-            setLastUiCloudSyncAt(null);
-            return;
-        }
+    const applyUiDraft = (draft: LiveStatsUiDraft) => {
+        setActiveSide(draft.activeSide === 'away' ? 'away' : 'home');
+        setHomeTeamId(typeof draft.homeTeamId === 'string' ? draft.homeTeamId : '');
+        setAwayTeamId(typeof draft.awayTeamId === 'string' ? draft.awayTeamId : '');
+        setMatchName(typeof draft.matchName === 'string' ? draft.matchName : '');
+        setIsMatchStarted(Boolean(draft.isMatchStarted));
+        setCustomButtons(Array.isArray(draft.customButtons) ? draft.customButtons : []);
+    };
 
-        setHasResolvedRemoteUiDraft(false);
+    const applyDefaults = (defaults: LiveStatsDefaults) => {
+        setHomeTeamId(typeof defaults.homeTeamId === 'string' ? defaults.homeTeamId : '');
+        setAwayTeamId(typeof defaults.awayTeamId === 'string' ? defaults.awayTeamId : '');
+    };
 
-        const uiDraftRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC);
-        const unsubscribe = onSnapshot(
-            uiDraftRef,
-            (snapshot) => {
-                if (!snapshot.exists()) {
-                    setHasResolvedRemoteUiDraft(true);
-                    return;
-                }
-
-                const remoteDraft = normalizeLiveStatsUiDraft(snapshot.data());
-                const remoteUpdatedAt = remoteDraft?.updatedAt ?? 0;
-                const localUpdatedAt = lastUiDraftSavedAtRef.current ?? 0;
-
-                if (remoteDraft && remoteUpdatedAt > localUpdatedAt) {
-                    applyUiDraft(remoteDraft);
-                }
-
-                if (remoteDraft && remoteUpdatedAt > 0) {
-                    setLastUiCloudSyncAt(remoteUpdatedAt);
-                    setUiCloudSyncState('synced');
-                }
-
-                setHasResolvedRemoteUiDraft(true);
-            },
-            (draftError) => {
-                console.error('Kunne ikke hente kampoppsett fra skyen.', draftError);
-                setHasResolvedRemoteUiDraft(true);
-            },
-        );
-
-        return unsubscribe;
-    }, [currentUser]);
-
-    useEffect(() => {
-        if (!currentUser) {
-            setHasResolvedRemoteDefaults(true);
-            setDefaultsCloudSyncState('idle');
-            setLastDefaultsCloudSyncAt(null);
-            return;
-        }
-
-        setHasResolvedRemoteDefaults(false);
-
-        const defaultsRef = doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC);
-        const unsubscribe = onSnapshot(
-            defaultsRef,
-            (snapshot) => {
-                if (!snapshot.exists()) {
-                    setHasResolvedRemoteDefaults(true);
-                    return;
-                }
-
-                const remoteDefaults = normalizeLiveStatsDefaults(snapshot.data());
-                const remoteUpdatedAt = remoteDefaults?.updatedAt ?? 0;
-                const localUpdatedAt = lastDefaultsSavedAtRef.current ?? 0;
-
-                if (remoteDefaults && remoteUpdatedAt > localUpdatedAt && !homeTeamIdRef.current && !awayTeamIdRef.current) {
-                    applyDefaults(remoteDefaults);
-                }
-
-                if (remoteDefaults && remoteUpdatedAt > 0) {
-                    setLastDefaultsCloudSyncAt(remoteUpdatedAt);
-                    setDefaultsCloudSyncState('synced');
-                }
-
-                setHasResolvedRemoteDefaults(true);
-            },
-            (defaultsError) => {
-                console.error('Kunne ikke hente lagvalg fra skyen.', defaultsError);
-                setHasResolvedRemoteDefaults(true);
-            },
-        );
-
-        return unsubscribe;
-    }, [currentUser]);
-
-    useEffect(() => {
-        if (!hasHydratedUiDraft || typeof window === 'undefined') {
-            return;
-        }
-
-        if (uiDraftSyncTimeoutRef.current) {
-            clearTimeout(uiDraftSyncTimeoutRef.current);
-            uiDraftSyncTimeoutRef.current = null;
-        }
-
-        const hasUiContent = (
-            activeSide !== 'home' ||
-            Boolean(homeTeamId) ||
-            Boolean(awayTeamId) ||
-            Boolean(matchName) ||
-            isMatchStarted ||
-            customButtons.length > 0
-        );
-
-        if (!hasUiContent) {
-            removeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid);
-            setLastUiDraftSavedAt(null);
-            setUiCloudSyncState('idle');
-            setLastUiCloudSyncAt(null);
-
-            if (currentUser && hasResolvedRemoteUiDraft) {
-                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC))
-                    .catch((draftError) => {
-                        console.error('Kunne ikke fjerne kampoppsett fra skyen.', draftError);
-                        setUiCloudSyncState('error');
-                    });
-            }
-
-            return;
-        }
-
-        const updatedAt = Date.now();
-        const nextUiDraft = normalizeLiveStatsUiDraft({
-            activeSide,
-            homeTeamId,
-            awayTeamId,
-            matchName,
-            isMatchStarted,
-            customButtons,
-            updatedAt,
-        });
-
-        if (!nextUiDraft) {
-            console.error('Ugyldig kampoppsett ble stoppet før lagring.');
-            setUiCloudSyncState('error');
-            return;
-        }
-
-        writeScopedLocalStorage(LIVE_STATS_UI_KEY, currentUser?.uid, nextUiDraft);
-        setLastUiDraftSavedAt(nextUiDraft.updatedAt ?? null);
-
-        if (!currentUser || !hasResolvedRemoteUiDraft) {
-            return;
-        }
-
-        setUiCloudSyncState('saving');
-        uiDraftSyncTimeoutRef.current = setTimeout(() => {
-            const nextRemoteUiDraft = normalizeLiveStatsUiDraft(prepareFirestorePayload(nextUiDraft));
-            if (!nextRemoteUiDraft) {
-                console.error('Ugyldig kampoppsett ble stoppet før sky-synk.');
-                setUiCloudSyncState('error');
-                return;
-            }
-
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_UI_REMOTE_DOC), nextRemoteUiDraft)
-                .then(() => {
-                    setLastUiCloudSyncAt(updatedAt);
-                    setUiCloudSyncState('synced');
-                })
-                .catch((draftError) => {
-                    console.error('Kunne ikke synkronisere kampoppsett til skyen.', draftError);
-                    setUiCloudSyncState('error');
-                });
-        }, 700);
-
-        return () => {
-            if (uiDraftSyncTimeoutRef.current) {
-                clearTimeout(uiDraftSyncTimeoutRef.current);
-                uiDraftSyncTimeoutRef.current = null;
-            }
-        };
-    }, [activeSide, awayTeamId, currentUser, customButtons, hasHydratedUiDraft, hasResolvedRemoteUiDraft, homeTeamId, isMatchStarted, matchName]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') {
-            return;
-        }
-
-        if (defaultsSyncTimeoutRef.current) {
-            clearTimeout(defaultsSyncTimeoutRef.current);
-            defaultsSyncTimeoutRef.current = null;
-        }
-
-        if (!homeTeamId && !awayTeamId) {
-            removeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid);
-            setLastDefaultsSavedAt(null);
-            setDefaultsCloudSyncState('idle');
-            setLastDefaultsCloudSyncAt(null);
-
-            if (currentUser && hasResolvedRemoteDefaults) {
-                void deleteDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC))
-                    .catch((defaultsError) => {
-                        console.error('Kunne ikke fjerne lagvalg fra skyen.', defaultsError);
-                        setDefaultsCloudSyncState('error');
-                    });
-            }
-
-            return;
-        }
-
-        const nextDefaults = normalizeLiveStatsDefaults({
-            homeTeamId,
-            awayTeamId,
-            updatedAt: Date.now(),
-        });
-
-        if (!nextDefaults) {
-            console.error('Ugyldig lagvalg ble stoppet før lagring.');
-            setDefaultsCloudSyncState('error');
-            return;
-        }
-
-        writeScopedLocalStorage(LIVE_STATS_DEFAULTS_KEY, currentUser?.uid, nextDefaults);
-        setLastDefaultsSavedAt(nextDefaults.updatedAt ?? null);
-
-        if (!currentUser || !hasResolvedRemoteDefaults) {
-            return;
-        }
-
-        setDefaultsCloudSyncState('saving');
-        defaultsSyncTimeoutRef.current = setTimeout(() => {
-            const nextRemoteDefaults = normalizeLiveStatsDefaults(prepareFirestorePayload(nextDefaults));
-            if (!nextRemoteDefaults) {
-                console.error('Ugyldig lagvalg ble stoppet før sky-synk.');
-                setDefaultsCloudSyncState('error');
-                return;
-            }
-
-            void setDoc(doc(db, 'users', currentUser.uid, 'appState', LIVE_STATS_DEFAULTS_REMOTE_DOC), nextRemoteDefaults)
-                .then(() => {
-                    setLastDefaultsCloudSyncAt(nextDefaults.updatedAt ?? Date.now());
-                    setDefaultsCloudSyncState('synced');
-                })
-                .catch((defaultsError) => {
-                    console.error('Kunne ikke synkronisere lagvalg til skyen.', defaultsError);
-                    setDefaultsCloudSyncState('error');
-                });
-        }, 700);
-
-        return () => {
-            if (defaultsSyncTimeoutRef.current) {
-                clearTimeout(defaultsSyncTimeoutRef.current);
-                defaultsSyncTimeoutRef.current = null;
-            }
-        };
-    }, [awayTeamId, currentUser, hasResolvedRemoteDefaults, homeTeamId]);
+    const {
+        hasResolvedRemoteUiDraft,
+        hasResolvedRemoteDefaults,
+        uiCloudSyncState,
+        lastUiCloudSyncAt,
+        defaultsCloudSyncState,
+        lastDefaultsCloudSyncAt,
+    } = useStatsSync({
+        currentUser: currentUser ?? null,
+        activeSide,
+        homeTeamId,
+        awayTeamId,
+        matchName,
+        isMatchStarted,
+        customButtons,
+        onUiDraftLoaded: applyUiDraft,
+        onDefaultsLoaded: applyDefaults,
+    });
 
     useEffect(() => {
         if (!feedback || feedback.type === 'error' || feedback.type === 'warning') {
             return;
         }
-
         const timeout = window.setTimeout(() => setFeedback(null), 4000);
         return () => window.clearTimeout(timeout);
     }, [feedback]);
@@ -482,7 +165,6 @@ export function Stats() {
         if (!hasResolvedRemoteUiDraft || !hasResolvedRemoteDefaults) {
             return;
         }
-
         if (teams.length > 0 && !homeTeamId) {
             setHomeTeamId(teams[0].name);
         }
@@ -492,7 +174,6 @@ export function Stats() {
         if (!hasResolvedRemoteUiDraft || !hasResolvedRemoteDefaults) {
             return;
         }
-
         if (teams.length > 1 && !awayTeamId) {
             const fallbackAway = teams.find((team) => team.name !== homeTeamId);
             if (fallbackAway) {
@@ -503,23 +184,15 @@ export function Stats() {
 
     const resolveTeamReference = (selectedName: string, fallbackName: string): TeamReference => {
         const matchingTeam = teams.find((team) => team.name === selectedName);
-        return {
-            id: matchingTeam?.id ?? null,
-            name: selectedName || fallbackName,
-        };
-    };
-
-    const handleSelectActiveSide = (nextSide: TeamSide) => {
-        setActiveSide(nextSide);
+        return { id: matchingTeam?.id ?? null, name: selectedName || fallbackName };
     };
 
     const handleTeamSelectionChange = (side: TeamSide, value: string) => {
         if (side === 'home') {
             setHomeTeamId(value);
-            return;
+        } else {
+            setAwayTeamId(value);
         }
-
-        setAwayTeamId(value);
     };
 
     const handleShotModalCommit = (
@@ -536,33 +209,17 @@ export function Stats() {
 
     const addCustomButton = () => {
         if (customButtons.length >= 8) {
-            setFeedback({
-                type: 'warning',
-                message: 'Maks åtte egendefinerte knapper per kampoppsett.'
-            });
+            setFeedback({ type: 'warning', message: 'Maks åtte egendefinerte knapper per kampoppsett.' });
             return;
         }
-
         const id = `custom_${Date.now()}`;
-        setCustomButtons((prev) => [
-            ...prev,
-            {
-                id,
-                label: 'Ny Stat',
-                color: 'bg-gradient-to-br from-purple-500 to-purple-700',
-            },
-        ]);
+        setCustomButtons((prev) => [...prev, { id, label: 'Ny Stat', color: 'bg-gradient-to-br from-purple-500 to-purple-700' }]);
     };
 
     const updateCustomButtonLabel = (id: string, newLabel: string) => {
         const trimmedLabel = newLabel.trim();
-        if (!trimmedLabel) {
-            return;
-        }
-
-        setCustomButtons((prev) => prev.map((button) => (
-            button.id === id ? { ...button, label: trimmedLabel } : button
-        )));
+        if (!trimmedLabel) return;
+        setCustomButtons((prev) => prev.map((button) => button.id === id ? { ...button, label: trimmedLabel } : button));
     };
 
     const openCustomButtonEditor = (id: string, currentLabel: string) => {
@@ -576,85 +233,54 @@ export function Stats() {
     };
 
     const handleSaveCustomButtonLabel = () => {
-        if (!editingButtonId) {
-            return;
-        }
-
+        if (!editingButtonId) return;
         const trimmedLabel = buttonLabelDraft.trim();
         if (!trimmedLabel) {
-            setFeedback({
-                type: 'warning',
-                message: 'Knappen må ha et navn før du lagrer endringen.'
-            });
+            setFeedback({ type: 'warning', message: 'Knappen må ha et navn før du lagrer endringen.' });
             return;
         }
-
         updateCustomButtonLabel(editingButtonId, trimmedLabel);
         closeCustomButtonEditor();
-        setFeedback({
-            type: 'info',
-            message: 'Knappen ble oppdatert.'
-        });
+        setFeedback({ type: 'info', message: 'Knappen ble oppdatert.' });
     };
 
     const removeCustomButton = (id: string) => {
         const hasRecordedValues = (homeState.stats[id] || 0) > 0 || (awayState.stats[id] || 0) > 0;
         if (hasRecordedValues) {
-            setFeedback({
-                type: 'warning',
-                message: 'Denne knappen har allerede registrerte tall i kampen og kan ikke slettes nå.'
-            });
+            setFeedback({ type: 'warning', message: 'Denne knappen har allerede registrerte tall i kampen og kan ikke slettes nå.' });
             return;
         }
-
         setPendingDeleteButtonId(id);
     };
 
     const handleConfirmDeleteCustomButton = () => {
-        if (!pendingDeleteButtonId) {
-            return;
-        }
-
+        if (!pendingDeleteButtonId) return;
         setCustomButtons((prev) => prev.filter((button) => button.id !== pendingDeleteButtonId));
         setPendingDeleteButtonId(null);
-        setFeedback({
-            type: 'info',
-            message: 'Knappen ble fjernet fra kampoppsettet.'
-        });
+        setFeedback({ type: 'info', message: 'Knappen ble fjernet fra kampoppsettet.' });
     };
 
     const lastAction = history[history.length - 1] as MatchEvent | undefined;
     const defaultMatchName = useMemo(() => {
-        const dateLabel = new Date().toLocaleDateString('nb-NO', {
-            day: '2-digit',
-            month: '2-digit'
-        });
-
+        const dateLabel = new Date().toLocaleDateString('nb-NO', { day: '2-digit', month: '2-digit' });
         return `${homeTeamId || 'Hjemme'} vs ${awayTeamId || 'Borte'} - ${dateLabel}`;
     }, [awayTeamId, homeTeamId]);
 
     const activeState = activeSide === 'home' ? homeState : awayState;
     const activeTeamName = activeSide === 'home' ? homeTeamId || 'Hjemme' : awayTeamId || 'Borte';
     const editingButton = editingButtonId ? customButtons.find((button) => button.id === editingButtonId) : null;
-    const pendingDeleteButton = pendingDeleteButtonId
-        ? customButtons.find((button) => button.id === pendingDeleteButtonId)
-        : null;
+    const pendingDeleteButton = pendingDeleteButtonId ? customButtons.find((button) => button.id === pendingDeleteButtonId) : null;
+
     const lastActionLabel = useMemo(() => {
-        if (!lastAction) {
-            return 'Ingen registreringer ennå.';
-        }
-
+        if (!lastAction) return 'Ingen registreringer ennå.';
         const sideLabel = lastAction.side === 'home' ? homeTeamId || 'Hjemme' : awayTeamId || 'Borte';
-
         switch (lastAction.type) {
             case 'combinedShot':
                 if (lastAction.data?.result === 'goal') return `Mål registrert for ${sideLabel}.`;
                 if (lastAction.data?.result === 'save') return `Redning registrert for ${sideLabel}.`;
                 return `Skuddbom registrert for ${sideLabel}.`;
-            case 'miss':
-                return `Skuddbom registrert for ${sideLabel}.`;
-            case 'tech':
-                return `Teknisk feil registrert for ${sideLabel}.`;
+            case 'miss': return `Skuddbom registrert for ${sideLabel}.`;
+            case 'tech': return `Teknisk feil registrert for ${sideLabel}.`;
             default: {
                 const customButton = customButtons.find((button) => button.id === lastAction.type);
                 return customButton
@@ -665,15 +291,6 @@ export function Stats() {
     }, [awayTeamId, customButtons, homeTeamId, lastAction]);
 
     const sameTeamsSelected = homeTeamId && awayTeamId && homeTeamId === awayTeamId;
-    const hasUiDraftContent = (
-        activeSide !== 'home' ||
-        Boolean(homeTeamId) ||
-        Boolean(awayTeamId) ||
-        Boolean(matchName) ||
-        isMatchStarted ||
-        customButtons.length > 0
-    );
-    const hasDefaultSelections = Boolean(homeTeamId) || Boolean(awayTeamId);
     const hasLiveMatchContent = (
         matchTime > 0 ||
         history.length > 0 ||
@@ -682,24 +299,12 @@ export function Stats() {
         homeState.shotLocations.length > 0 ||
         awayState.shotLocations.length > 0
     );
-    const hasAnyPersistedContent = hasLiveMatchContent || hasUiDraftContent || hasDefaultSelections;
     const isLivePhase = isMatchStarted || hasLiveMatchContent;
     const canSaveMatch = Boolean(currentUser) && !sameTeamsSelected && isOnline && saveState !== 'saving';
-    const hasHistorySave = lastHistorySaveAt !== null;
-    const hasUnsavedChangesSinceHistorySave = Boolean(
-        lastHistorySaveAt &&
-        lastDraftSavedAt &&
-        lastDraftSavedAt > lastHistorySaveAt
-    );
+    const hasUnsavedChangesSinceHistorySave = Boolean(lastHistorySaveAt && lastDraftSavedAt && lastDraftSavedAt > lastHistorySaveAt);
     const formattedDraftTime = lastDraftSavedAt
         ? new Date(lastDraftSavedAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
         : null;
-    const formattedHistorySaveTime = lastHistorySaveAt
-        ? new Date(lastHistorySaveAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })
-        : null;
-    const hasSavedToCloud = hasHistorySave;
-    const hasUnsavedChangesSinceSave = hasUnsavedChangesSinceHistorySave;
-    const formattedRemoteSaveTime = formattedHistorySaveTime;
     const lastConfirmedCloudSyncAt = Math.max(
         lastMatchCloudSyncAt ?? 0,
         lastUiCloudSyncAt ?? 0,
@@ -710,6 +315,7 @@ export function Stats() {
         : null;
     const isAnyCloudSyncSaving = [matchCloudSyncState, uiCloudSyncState, defaultsCloudSyncState].includes('saving');
     const hasAnyCloudSyncError = [matchCloudSyncState, uiCloudSyncState, defaultsCloudSyncState].includes('error');
+    const hasAnyPersistedContent = hasLiveMatchContent || Boolean(homeTeamId) || Boolean(awayTeamId);
     const localDraftTitle = draftRecovered ? 'Gjenopprettet' : lastDraftSavedAt ? 'Lagret lokalt' : 'Ikke lagret';
     const localDraftText = draftRecovered && formattedDraftTime
         ? `Gjenopprettet fra ${draftRecoveredFrom === 'cloud' ? 'skyen' : 'denne enheten'} kl. ${formattedDraftTime}.`
@@ -719,26 +325,6 @@ export function Stats() {
     const localDraftHint = isOnline
         ? 'Kladden beholdes lokalt hvis siden oppdateres.'
         : 'Fortsetter å sikre kampen lokalt uten nett.';
-    const legacyCloudStatusTitle = !isOnline
-        ? 'Venter på nett'
-        : saveState === 'saving'
-            ? 'Lagrer nå...'
-            : hasUnsavedChangesSinceSave
-                ? 'Ikke oppdatert ennå'
-                : hasSavedToCloud && formattedRemoteSaveTime
-                    ? `Sist lagret ${formattedRemoteSaveTime}`
-                    : 'Ikke lagret ennå';
-    const legacyCloudStatusHint = !isOnline
-        ? 'Lagre til laghistorikken når forbindelsen er tilbake.'
-        : saveState === 'saving'
-            ? 'Sender kampen til laghistorikken nå.'
-            : hasUnsavedChangesSinceSave
-                ? 'Trykk Lagre kamp for å sende de siste endringene.'
-                : hasSavedToCloud
-                    ? 'Laghistorikken er oppdatert.'
-                    : 'Første lagring sender kampen til laghistorikken.';
-    void legacyCloudStatusTitle;
-    void legacyCloudStatusHint;
     const cloudStatusTitle = !hasAnyPersistedContent
         ? 'Ikke lagret'
         : !currentUser || !isOnline
@@ -767,36 +353,25 @@ export function Stats() {
         ? 'Lagrer kamp...'
         : !isOnline
             ? 'Offline'
-            : hasUnsavedChangesSinceSave
+            : hasUnsavedChangesSinceHistorySave
                 ? 'Lagre endringer'
                 : 'Lagre kamp';
-    const mobileSaveLabel = saveState === 'saving'
-        ? 'Lagrer'
-        : !isOnline
-            ? 'Offline'
-            : 'Lagre';
+    const mobileSaveLabel = saveState === 'saving' ? 'Lagrer' : !isOnline ? 'Offline' : 'Lagre';
 
     useEffect(() => {
-        if (saveState === 'success' && hasUnsavedChangesSinceSave) {
+        if (saveState === 'success' && hasUnsavedChangesSinceHistorySave) {
             setSaveState('idle');
         }
-    }, [hasUnsavedChangesSinceSave, saveState]);
+    }, [hasUnsavedChangesSinceHistorySave, saveState]);
 
     const handleStartMatch = () => {
         if (sameTeamsSelected) {
-            setFeedback({
-                type: 'warning',
-                message: 'Velg ulike lag på hjemme- og bortesiden før du starter kampen.'
-            });
+            setFeedback({ type: 'warning', message: 'Velg ulike lag på hjemme- og bortesiden før du starter kampen.' });
             return;
         }
-
         setIsMatchStarted(true);
         setShowSetupPanel(false);
-        setFeedback({
-            type: 'info',
-            message: hasLiveMatchContent ? 'Fortsetter siste kamp.' : 'Kampen er klar for live-registrering.'
-        });
+        setFeedback({ type: 'info', message: hasLiveMatchContent ? 'Fortsetter siste kamp.' : 'Kampen er klar for live-registrering.' });
     };
 
     const handleSaveMatch = async () => {
@@ -805,20 +380,12 @@ export function Stats() {
             setFeedback({ type: 'error', message: 'Du må være logget inn for å lagre kampen.' });
             return;
         }
-
         if (!isOnline) {
-            setFeedback({
-                type: 'warning',
-                message: 'Ingen nettforbindelse. Kampen ligger fortsatt trygt i lokal kladd.'
-            });
+            setFeedback({ type: 'warning', message: 'Ingen nettforbindelse. Kampen ligger fortsatt trygt i lokal kladd.' });
             return;
         }
-
         if (sameTeamsSelected) {
-            setFeedback({
-                type: 'warning',
-                message: 'Hjemme- og bortelag må være ulike før du lagrer kampen.'
-            });
+            setFeedback({ type: 'warning', message: 'Hjemme- og bortelag må være ulike før du lagrer kampen.' });
             return;
         }
 
@@ -847,22 +414,15 @@ export function Stats() {
             }));
 
             await addDoc(collection(db, 'users', currentUser.uid, 'matches'), nextMatchDocument);
-
             setSaveState('success');
             setLastHistorySaveAt(Date.now());
             setSavedMatchName(name);
             setIsSaveSuccessDialogOpen(true);
-            setFeedback({
-                type: 'success',
-                message: `Kampen ble lagret som "${name}".`
-            });
+            setFeedback({ type: 'success', message: `Kampen ble lagret som "${name}".` });
         } catch (saveError) {
             console.error(saveError);
             setSaveState('error');
-            setFeedback({
-                type: 'error',
-                message: 'Kunne ikke lagre kampen. Lokal kladd er beholdt.'
-            });
+            setFeedback({ type: 'error', message: 'Kunne ikke lagre kampen. Lokal kladd er beholdt.' });
         }
     };
 
@@ -877,30 +437,11 @@ export function Stats() {
         setSavedMatchName('');
         setIsSaveSuccessDialogOpen(false);
         setIsResetDialogOpen(false);
-        setFeedback({
-            type: 'info',
-            message: 'Ny kamp er klar. Lagvalg og egendefinerte knapper er beholdt.'
-        });
+        setFeedback({ type: 'info', message: 'Ny kamp er klar. Lagvalg og egendefinerte knapper er beholdt.' });
     };
 
-    const renderFeedback = (state: FeedbackState) => {
-        const styles = {
-            success: 'border-green-500/30 bg-green-500/10 text-green-100',
-            error: 'border-red-500/30 bg-red-500/10 text-red-100',
-            info: 'border-primary/30 bg-primary/10 text-primary',
-            warning: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'
-        } satisfies Record<FeedbackState['type'], string>;
-
-        return (
-            <div className={clsx('flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm', styles[state.type])} aria-live="polite">
-                {state.type === 'success' ? <CheckCircle2 size={18} className="mt-0.5 shrink-0" /> : null}
-                {state.type === 'info' ? <Info size={18} className="mt-0.5 shrink-0" /> : null}
-                {state.type === 'warning' ? <WifiOff size={18} className="mt-0.5 shrink-0" /> : null}
-                {state.type === 'error' ? <Info size={18} className="mt-0.5 shrink-0" /> : null}
-                <span>{state.message}</span>
-            </div>
-        );
-    };
+    const homeShotCount = homeState.shotLocations.reduce((sum, loc) => sum + loc.count, 0);
+    const awayShotCount = awayState.shotLocations.reduce((sum, loc) => sum + loc.count, 0);
 
     if (!isLivePhase) {
         return (
@@ -912,16 +453,10 @@ export function Stats() {
                             Henter lag og klargjør kampoppsettet...
                         </div>
                     ) : null}
-                    {!isOnline ? renderFeedback({
-                        type: 'warning',
-                        message: 'Offline. Du kan fortsatt forberede oppsettet før kamp.'
-                    }) : null}
-                    {error ? renderFeedback({ type: 'error', message: error }) : null}
-                    {sameTeamsSelected ? renderFeedback({
-                        type: 'warning',
-                        message: 'Velg ulike lag på hjemme- og bortesiden før du starter.'
-                    }) : null}
-                    {feedback ? renderFeedback(feedback) : null}
+                    {!isOnline ? <FeedbackBanner type="warning" message="Offline. Du kan fortsatt forberede oppsettet før kamp." /> : null}
+                    {error ? <FeedbackBanner type="error" message={error} /> : null}
+                    {sameTeamsSelected ? <FeedbackBanner type="warning" message="Velg ulike lag på hjemme- og bortesiden før du starter." /> : null}
+                    {feedback ? <FeedbackBanner type={feedback.type} message={feedback.message} /> : null}
                 </div>
 
                 <section className="rounded-[2rem] border border-white/10 bg-card/80 p-6 shadow-2xl backdrop-blur-xl md:p-8">
@@ -938,11 +473,7 @@ export function Stats() {
                                 onChange={(e) => handleTeamSelectionChange('home', e.target.value)}
                             >
                                 <option value="Hjemme">Hjemme</option>
-                                {teams.map((team) => (
-                                    <option key={team.id} value={team.name}>
-                                        {team.name}
-                                    </option>
-                                ))}
+                                {teams.map((team) => <option key={team.id} value={team.name}>{team.name}</option>)}
                             </select>
                         </label>
 
@@ -954,11 +485,7 @@ export function Stats() {
                                 onChange={(e) => handleTeamSelectionChange('away', e.target.value)}
                             >
                                 <option value="Borte">Borte</option>
-                                {teams.map((team) => (
-                                    <option key={team.id} value={team.name}>
-                                        {team.name}
-                                    </option>
-                                ))}
+                                {teams.map((team) => <option key={team.id} value={team.name}>{team.name}</option>)}
                             </select>
                         </label>
                     </div>
@@ -975,17 +502,13 @@ export function Stats() {
                             placeholder={defaultMatchName}
                             className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-white transition-all focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
                         />
-                        <p className="mt-2 text-xs text-gray-500">
-                            Tomt felt lagrer automatisk som "{defaultMatchName}".
-                        </p>
+                        <p className="mt-2 text-xs text-gray-500">Tomt felt lagrer automatisk som "{defaultMatchName}".</p>
                     </div>
 
                     <div className="mt-5 grid gap-3 md:grid-cols-3">
                         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Lagvalg</p>
-                            <p className="mt-2 text-sm font-semibold text-white">
-                                {homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}
-                            </p>
+                            <p className="mt-2 text-sm font-semibold text-white">{homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}</p>
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Knapper</p>
@@ -1035,22 +558,15 @@ export function Stats() {
                         Henter lag og klargjør kampoppsettet...
                     </div>
                 ) : null}
-                {!isOnline ? renderFeedback({
-                    type: 'warning',
-                    message: 'Offline. Kampen fortsetter lokalt og kan lagres til laghistorikken når nettet er tilbake.'
-                }) : null}
-                {draftRecovered && hasLiveMatchContent ? renderFeedback({
-                    type: 'info',
-                    message: formattedDraftTime
+                {!isOnline ? <FeedbackBanner type="warning" message="Offline. Kampen fortsetter lokalt og kan lagres til laghistorikken når nettet er tilbake." /> : null}
+                {draftRecovered && hasLiveMatchContent ? <FeedbackBanner type="info" message={
+                    formattedDraftTime
                         ? `Siste kamp er gjenopptatt fra ${draftRecoveredFrom === 'cloud' ? 'skykladd' : 'lokal kladd'} kl. ${formattedDraftTime}.`
                         : `Siste kamp er gjenopptatt fra ${draftRecoveredFrom === 'cloud' ? 'skykladd' : 'lokal kladd'}.`
-                }) : null}
-                {error ? renderFeedback({ type: 'error', message: error }) : null}
-                {sameTeamsSelected ? renderFeedback({
-                    type: 'warning',
-                    message: 'Velg ulike lag på hjemme- og bortesiden før du lagrer.'
-                }) : null}
-                {feedback ? renderFeedback(feedback) : null}
+                } /> : null}
+                {error ? <FeedbackBanner type="error" message={error} /> : null}
+                {sameTeamsSelected ? <FeedbackBanner type="warning" message="Velg ulike lag på hjemme- og bortesiden før du lagrer." /> : null}
+                {feedback ? <FeedbackBanner type={feedback.type} message={feedback.message} /> : null}
             </div>
 
             <div className="mb-4 rounded-3xl border border-white/10 bg-card/70 p-4 shadow-xl">
@@ -1058,9 +574,7 @@ export function Stats() {
                     <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Pågående kamp</p>
                         <h2 className="mt-2 text-xl font-bold text-white">{matchName.trim() || defaultMatchName}</h2>
-                        <p className="mt-1 text-sm text-gray-400">
-                            {homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}
-                        </p>
+                        <p className="mt-1 text-sm text-gray-400">{homeTeamId || 'Hjemme'} mot {awayTeamId || 'Borte'}</p>
                     </div>
 
                     <div className="flex flex-col gap-2 sm:flex-row">
@@ -1098,12 +612,10 @@ export function Stats() {
             <div className="mb-4 grid grid-cols-2 gap-2 sm:hidden">
                 <button
                     type="button"
-                    onClick={() => handleSelectActiveSide('home')}
+                    onClick={() => setActiveSide('home')}
                     className={clsx(
                         'rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-all',
-                        activeSide === 'home'
-                            ? 'border-primary bg-primary/15 text-white'
-                            : 'border-white/10 bg-white/5 text-gray-300'
+                        activeSide === 'home' ? 'border-primary bg-primary/15 text-white' : 'border-white/10 bg-white/5 text-gray-300'
                     )}
                 >
                     <span className="block text-[11px] uppercase tracking-[0.2em] text-gray-400">Hjemme</span>
@@ -1111,12 +623,10 @@ export function Stats() {
                 </button>
                 <button
                     type="button"
-                    onClick={() => handleSelectActiveSide('away')}
+                    onClick={() => setActiveSide('away')}
                     className={clsx(
                         'rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-all',
-                        activeSide === 'away'
-                            ? 'border-secondary bg-secondary/15 text-white'
-                            : 'border-white/10 bg-white/5 text-gray-300'
+                        activeSide === 'away' ? 'border-secondary bg-secondary/15 text-white' : 'border-white/10 bg-white/5 text-gray-300'
                     )}
                 >
                     <span className="block text-[11px] uppercase tracking-[0.2em] text-gray-400">Borte</span>
@@ -1135,7 +645,7 @@ export function Stats() {
                                 ? 'border-primary bg-primary/10 shadow-[0_0_20px_rgba(0,243,255,0.2)]'
                                 : 'border-transparent opacity-70 hover:opacity-100',
                         )}
-                        onClick={() => handleSelectActiveSide('home')}
+                        onClick={() => setActiveSide('home')}
                     >
                         <select
                             className="min-h-[44px] w-full rounded-xl border border-white/10 bg-black/30 px-3 text-center text-sm font-bold uppercase text-white focus:outline-none focus:ring-1 focus:ring-primary sm:text-xl"
@@ -1143,11 +653,7 @@ export function Stats() {
                             onChange={(e) => handleTeamSelectionChange('home', e.target.value)}
                         >
                             <option value="Hjemme">Hjemme</option>
-                            {teams.map((team) => (
-                                <option key={team.id} value={team.name}>
-                                    {team.name}
-                                </option>
-                            ))}
+                            {teams.map((team) => <option key={team.id} value={team.name}>{team.name}</option>)}
                         </select>
                         <div className="mt-3 text-4xl font-black text-primary sm:text-5xl md:text-7xl">{homeState.score}</div>
                     </div>
@@ -1174,7 +680,7 @@ export function Stats() {
                                 ? 'border-secondary bg-secondary/10 shadow-[0_0_20px_rgba(255,102,0,0.2)]'
                                 : 'border-transparent opacity-70 hover:opacity-100',
                         )}
-                        onClick={() => handleSelectActiveSide('away')}
+                        onClick={() => setActiveSide('away')}
                     >
                         <select
                             className="min-h-[44px] w-full rounded-xl border border-white/10 bg-black/30 px-3 text-center text-sm font-bold uppercase text-white focus:outline-none focus:ring-1 focus:ring-secondary sm:text-xl"
@@ -1182,11 +688,7 @@ export function Stats() {
                             onChange={(e) => handleTeamSelectionChange('away', e.target.value)}
                         >
                             <option value="Borte">Borte</option>
-                            {teams.map((team) => (
-                                <option key={team.id} value={team.name}>
-                                    {team.name}
-                                </option>
-                            ))}
+                            {teams.map((team) => <option key={team.id} value={team.name}>{team.name}</option>)}
                         </select>
                         <div className="mt-3 text-4xl font-black text-secondary sm:text-5xl md:text-7xl">{awayState.score}</div>
                     </div>
@@ -1237,67 +739,65 @@ export function Stats() {
             </div>
 
             {showSetupPanel ? (
-            <div className="mb-4 rounded-3xl border border-white/10 bg-card/70 p-4 shadow-xl">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-                    <div className="flex-1">
-                        <label htmlFor="match-name" className="mb-2 block text-sm font-medium text-gray-300">
-                            Kampnavn
-                        </label>
-                        <input
-                            id="match-name"
-                            type="text"
-                            value={matchName}
-                            onChange={(e) => setMatchName(e.target.value)}
-                            placeholder={defaultMatchName}
-                            className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white transition-all focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                        />
-                        <p className="mt-2 text-xs text-gray-500">
-                            Tomt felt lagrer automatisk som "{defaultMatchName}".
-                        </p>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                        <button
-                            type="button"
-                            onClick={() => setIsEditMode((value) => !value)}
-                            className={clsx(
-                                'flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-colors',
-                                isEditMode ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'
-                            )}
-                        >
-                            <Edit2 size={16} />
-                            {isEditMode ? 'Ferdig' : 'Rediger knapper'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setIsResetDialogOpen(true)}
-                            className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
-                            <RefreshCcw size={16} />
-                            Ny kamp
-                        </button>
-                    </div>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Siste registrering</p>
-                        <p className="mt-2 text-sm text-white">{lastActionLabel}</p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                            {isOnline ? <Wifi size={14} className="text-primary" /> : <WifiOff size={14} className="text-yellow-300" />}
-                            Lokal kladd
+                <div className="mb-4 rounded-3xl border border-white/10 bg-card/70 p-4 shadow-xl">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+                        <div className="flex-1">
+                            <label htmlFor="match-name" className="mb-2 block text-sm font-medium text-gray-300">
+                                Kampnavn
+                            </label>
+                            <input
+                                id="match-name"
+                                type="text"
+                                value={matchName}
+                                onChange={(e) => setMatchName(e.target.value)}
+                                placeholder={defaultMatchName}
+                                className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white transition-all focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                            />
+                            <p className="mt-2 text-xs text-gray-500">Tomt felt lagrer automatisk som "{defaultMatchName}".</p>
                         </div>
-                        <p className="mt-2 text-sm font-semibold text-white">{localDraftTitle}</p>
-                        <p className="mt-1 text-sm text-gray-300">{localDraftText}</p>
-                        <p className="mt-1 text-xs text-gray-500">{localDraftHint}</p>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                            <button
+                                type="button"
+                                onClick={() => setIsEditMode((value) => !value)}
+                                className={clsx(
+                                    'flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold transition-colors',
+                                    isEditMode ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'
+                                )}
+                            >
+                                <Edit2 size={16} />
+                                {isEditMode ? 'Ferdig' : 'Rediger knapper'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setIsResetDialogOpen(true)}
+                                className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                            >
+                                <RefreshCcw size={16} />
+                                Ny kamp
+                            </button>
+                        </div>
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Sky-lagring</p>
-                        <p className="mt-2 text-sm font-semibold text-white">{cloudStatusTitle}</p>
-                        <p className="mt-1 text-xs text-gray-400">{cloudStatusHint}</p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Siste registrering</p>
+                            <p className="mt-2 text-sm text-white">{lastActionLabel}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
+                                {isOnline ? <Wifi size={14} className="text-primary" /> : <WifiOff size={14} className="text-yellow-300" />}
+                                Lokal kladd
+                            </div>
+                            <p className="mt-2 text-sm font-semibold text-white">{localDraftTitle}</p>
+                            <p className="mt-1 text-sm text-gray-300">{localDraftText}</p>
+                            <p className="mt-1 text-xs text-gray-500">{localDraftHint}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Sky-lagring</p>
+                            <p className="mt-2 text-sm font-semibold text-white">{cloudStatusTitle}</p>
+                            <p className="mt-1 text-xs text-gray-400">{cloudStatusHint}</p>
+                        </div>
                     </div>
                 </div>
-            </div>
             ) : null}
 
             <div className="grid grid-cols-2 gap-4 md:gap-6 lg:grid-cols-4">
@@ -1308,7 +808,7 @@ export function Stats() {
                         className="flex items-center justify-between rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/15 to-primary/5 px-4 py-4 text-sm font-black text-white transition active:scale-[0.97] hover:from-primary/25 hover:to-primary/10"
                     >
                         <span>🎯 Skudd</span>
-                        <span className="text-xl font-black text-primary">{homeState.score + homeState.shotLocations.length}</span>
+                        <span className="text-xl font-black text-primary">{homeShotCount}</span>
                     </button>
                     <button
                         type="button"
@@ -1316,7 +816,7 @@ export function Stats() {
                         className="flex items-center justify-between rounded-2xl border border-secondary/30 bg-gradient-to-br from-secondary/15 to-secondary/5 px-4 py-4 text-sm font-black text-white transition active:scale-[0.97] hover:from-secondary/25 hover:to-secondary/10"
                     >
                         <span>🎯 Skudd</span>
-                        <span className="text-xl font-black text-secondary">{awayState.score + awayState.shotLocations.length}</span>
+                        <span className="text-xl font-black text-secondary">{awayShotCount}</span>
                     </button>
                 </div>
 
@@ -1332,20 +832,10 @@ export function Stats() {
 
                 <div className="col-span-2 mb-4 flex flex-col justify-center gap-4 sm:flex-row">
                     <div className="w-full sm:w-1/2">
-                        <GoalVisualizer
-                            saves={activeState.saves}
-                            teamName={activeTeamName}
-                            type="save"
-                            title="Redninger"
-                        />
+                        <GoalVisualizer saves={activeState.saves} teamName={activeTeamName} type="save" title="Redninger" />
                     </div>
                     <div className="w-full sm:w-1/2">
-                        <GoalVisualizer
-                            saves={activeState.goalLocations}
-                            teamName={activeTeamName}
-                            type="goal"
-                            title="Mål"
-                        />
+                        <GoalVisualizer saves={activeState.goalLocations} teamName={activeTeamName} type="goal" title="Mål" />
                     </div>
                 </div>
 
@@ -1357,7 +847,6 @@ export function Stats() {
                         onClick={() => updateStat(activeSide, 'miss')}
                         color="bg-gradient-to-br from-red-500 to-red-700"
                     />
-
                     <StatButton
                         type="tech"
                         label="Teknisk Feil"
@@ -1378,17 +867,13 @@ export function Stats() {
                                     openCustomButtonEditor(button.id, button.label);
                                     return;
                                 }
-
                                 updateStat(activeSide, button.id);
                             }}
                             color={button.color}
                         />
                         {isEditMode ? (
                             <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    removeCustomButton(button.id);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); removeCustomButton(button.id); }}
                                 className="absolute -right-2 -top-2 rounded-full bg-red-600 p-2 shadow-lg hover:bg-red-500"
                             >
                                 <Trash2 size={16} />
@@ -1466,31 +951,13 @@ export function Stats() {
                 onClose={() => setIsSaveSuccessDialogOpen(false)}
                 actions={
                     <>
-                        <button
-                            type="button"
-                            onClick={() => setIsSaveSuccessDialogOpen(false)}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
+                        <button type="button" onClick={() => setIsSaveSuccessDialogOpen(false)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">
                             Fortsett kampen
                         </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsSaveSuccessDialogOpen(false);
-                                handleResetMatch();
-                            }}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
+                        <button type="button" onClick={() => { setIsSaveSuccessDialogOpen(false); handleResetMatch(); }} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">
                             Ny kamp
                         </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsSaveSuccessDialogOpen(false);
-                                navigate('/teams');
-                            }}
-                            className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white"
-                        >
+                        <button type="button" onClick={() => { setIsSaveSuccessDialogOpen(false); navigate('/teams'); }} className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white">
                             Åpne lag
                         </button>
                     </>
@@ -1504,18 +971,10 @@ export function Stats() {
                 onClose={closeCustomButtonEditor}
                 actions={
                     <>
-                        <button
-                            type="button"
-                            onClick={closeCustomButtonEditor}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
+                        <button type="button" onClick={closeCustomButtonEditor} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">
                             Avbryt
                         </button>
-                        <button
-                            type="button"
-                            onClick={handleSaveCustomButtonLabel}
-                            className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white"
-                        >
+                        <button type="button" onClick={handleSaveCustomButtonLabel} className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white">
                             Lagre navn
                         </button>
                     </>
@@ -1544,18 +1003,10 @@ export function Stats() {
                 onClose={() => setPendingDeleteButtonId(null)}
                 actions={
                     <>
-                        <button
-                            type="button"
-                            onClick={() => setPendingDeleteButtonId(null)}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
+                        <button type="button" onClick={() => setPendingDeleteButtonId(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">
                             Behold knapp
                         </button>
-                        <button
-                            type="button"
-                            onClick={handleConfirmDeleteCustomButton}
-                            className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-500"
-                        >
+                        <button type="button" onClick={handleConfirmDeleteCustomButton} className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-500">
                             Slett knapp
                         </button>
                     </>
@@ -1569,18 +1020,10 @@ export function Stats() {
                 onClose={() => setIsResetDialogOpen(false)}
                 actions={
                     <>
-                        <button
-                            type="button"
-                            onClick={() => setIsResetDialogOpen(false)}
-                            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                        >
+                        <button type="button" onClick={() => setIsResetDialogOpen(false)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10">
                             Avbryt
                         </button>
-                        <button
-                            type="button"
-                            onClick={handleResetMatch}
-                            className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white"
-                        >
+                        <button type="button" onClick={handleResetMatch} className="rounded-2xl bg-primary px-4 py-3 text-sm font-bold text-black transition hover:bg-white">
                             Nullstill kamp
                         </button>
                     </>
